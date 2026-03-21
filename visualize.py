@@ -48,7 +48,17 @@ VARIANT_DISPLAY = {
     "deterministic": "Deterministic",
 }
 
-PALETTE = ["#2657D6", "#C85831", "#3BA55D", "#E49C24", "#8B5BA6", "#D94F8C"]
+PALETTE = [
+    "#E63946",  # red
+    "#2A9D8F",  # teal
+    "#E9A820",  # amber
+    "#264653",  # dark blue-gray
+    "#8B5CF6",  # violet
+    "#F97316",  # orange
+    "#06B6D4",  # cyan
+    "#EC4899",  # pink
+    "#84CC16",  # lime
+]
 
 
 def load_train_json(path: Path) -> dict | None:
@@ -100,6 +110,9 @@ def plot_training_curves(results_dir: Path, output_dir: Path) -> None:
             label = f"{VARIANT_DISPLAY.get(variant, variant)} ({SITE_DISPLAY.get(site, site)})"
             all_variants.append((label, data["history"]))
 
+    linestyles = ["-", "--", "-.", ":", "-", "--", "-.", ":", "-"]
+    markers = ["o", "s", "^", "D", "v", "P", "X", "*", "h"]
+
     for idx, (title, ylabel) in enumerate([("Training Loss", "Loss"), ("Validation Loss", "Loss")]):
         ax = axes[idx]
         key = "train_loss" if idx == 0 else "val_loss"
@@ -107,7 +120,11 @@ def plot_training_curves(results_dir: Path, output_dir: Path) -> None:
             epochs = [h["epoch"] for h in history]
             values = [h[key] for h in history]
             color = PALETTE[i % len(PALETTE)]
-            ax.plot(epochs, values, color=color, linewidth=1.5, label=label, alpha=0.85)
+            ls = linestyles[i % len(linestyles)]
+            mk = markers[i % len(markers)]
+            ax.plot(epochs, values, color=color, linewidth=1.8, label=label,
+                    alpha=0.9, linestyle=ls, marker=mk, markersize=3,
+                    markevery=max(1, len(epochs) // 8))
         ax.set_title(title)
         ax.set_xlabel("Epoch")
         ax.set_ylabel(ylabel)
