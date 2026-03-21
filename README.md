@@ -52,16 +52,7 @@ data/era5_miami.csv
 
 核心模型为 **Probabilistic GRU**（`train.py` 中的 `ProbabilisticGRU` 类），共约 **328,000 个可训练参数**。
 
-```
-输入 [B, 72, 24] ──→ Feature Projection ──→ GRU Encoder ──→ Multi-Head Attention ──→ Context
-                         (Linear+LN+GELU)    (2-layer, H=128)    (4 heads)              ↓
-                                                                              ┌─ Horizon Embedding
-                                                                              ↓
-                                                                    Residual Decoder (2 blocks)
-                                                                              ↓
-                                                                 ┌── Mean Head ──→ [B, 24, 2]
-                                                                 └── LogVar Head ──→ [B, 24, 2]
-```
+![模型架构图](results/model_architecture.png)
 
 ### 关键设计
 
@@ -453,12 +444,14 @@ Uncertainty is decomposed into:
 
 Data: ERA5 single-level hourly time series (2010-01-01 to 2025-12-31, 16 years, ~140K samples per site).
 
-The **Probabilistic GRU** model (~328K parameters) features:
+The **Probabilistic GRU** model (~328K parameters):
+
+![Model Architecture](results/model_architecture.png)
 
 1. **Feature Projection**: Linear(24→64) + LayerNorm + GELU + Dropout
 2. **GRU Encoder**: 2-layer GRU (hidden_size=128) over 72-hour lookback
-3. **Multi-Head Attention**: 4-head cross-attention from last hidden state to encoder outputs
-4. **Horizon-Aware Decoder**: learnable horizon embeddings + 2 residual MLP blocks with LayerNorm
+3. **Multi-Head Attention**: 4-head cross-attention from last hidden state to encoder outputs (ablation: optional)
+4. **Horizon-Aware Decoder**: learnable horizon embeddings + 2 residual MLP blocks with LayerNorm (ablation: optional)
 5. **Probabilistic Heads**: separate mean and log-variance outputs per target
 
 ### Training
