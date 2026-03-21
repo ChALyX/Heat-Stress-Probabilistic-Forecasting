@@ -110,12 +110,19 @@ def heat_index_celsius(temp_c: np.ndarray, rh: np.ndarray) -> np.ndarray:
     """
     Compute the NOAA heat index in Celsius.
 
-    For cooler conditions the heat index is not very meaningful, so the raw air
-    temperature is used below approximately 26.7 C (80 F).
+    Follows the full NOAA algorithm:
+    1. Compute the Steadman simple formula as a first estimate.
+    2. If the simple estimate < 80 F, use it directly.
+    3. Otherwise apply the Rothfusz regression with low-RH and high-RH adjustments.
     """
 
     temp_f = temp_c * 9.0 / 5.0 + 32.0
-    hi_f = (
+
+    # Step 1: Steadman simple formula (NOAA initial estimate).
+    hi_simple = 0.5 * (temp_f + 61.0 + (temp_f - 68.0) * 1.2 + rh * 0.094)
+
+    # Step 2: Rothfusz regression for the full heat-index calculation.
+    hi_full = (
         -42.379
         + 2.04901523 * temp_f
         + 10.14333127 * rh
@@ -127,11 +134,14 @@ def heat_index_celsius(temp_c: np.ndarray, rh: np.ndarray) -> np.ndarray:
         - 0.00000199 * temp_f**2 * rh**2
     )
 
+    # Step 3: Low-RH and high-RH adjustments (applied only to full regression).
     adjustment_low = ((13.0 - rh) / 4.0) * np.sqrt(np.maximum(0.0, (17.0 - np.abs(temp_f - 95.0)) / 17.0))
     adjustment_high = ((rh - 85.0) / 10.0) * ((87.0 - temp_f) / 5.0)
-    hi_f = np.where((rh < 13.0) & (80.0 <= temp_f) & (temp_f <= 112.0), hi_f - adjustment_low, hi_f)
-    hi_f = np.where((rh > 85.0) & (80.0 <= temp_f) & (temp_f <= 87.0), hi_f + adjustment_high, hi_f)
-    hi_f = np.where(temp_f < 80.0, temp_f, hi_f)
+    hi_full = np.where((rh < 13.0) & (80.0 <= temp_f) & (temp_f <= 112.0), hi_full - adjustment_low, hi_full)
+    hi_full = np.where((rh > 85.0) & (80.0 <= temp_f) & (temp_f <= 87.0), hi_full + adjustment_high, hi_full)
+
+    # Step 4: Use simple formula when its estimate < 80 F, otherwise use full regression.
+    hi_f = np.where(hi_simple < 80.0, hi_simple, hi_full)
     return (hi_f - 32.0) * 5.0 / 9.0
 
 

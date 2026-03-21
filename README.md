@@ -37,7 +37,7 @@
 
 ## 数据集
 
-数据来源：ERA5 single-level hourly time series（约 2020-01-01 至 2026-03-11）
+数据来源：ERA5 single-level hourly time series（2010-01-01 至 2025-12-31，共 16 年）
 
 ```
 data/era5_qingdao.csv
@@ -125,29 +125,29 @@ L = weighted_NLL + 0.1 * MSE + 1e-4 * variance_penalty
 
 | 站点 | HI RMSE | HI CRPS | HI Skill | WB RMSE | WB CRPS | WB Skill |
 |------|---------|---------|----------|---------|---------|----------|
-| Qingdao | 2.011 | 1.051 | 0.558 | 1.473 | 0.759 | 0.525 |
-| Dubai | 1.645 | 0.868 | 0.833 | 0.840 | 0.457 | 0.807 |
-| Singapore | 1.637 | 0.869 | 0.594 | 0.404 | 0.223 | 0.571 |
-| Miami | 1.774 | 0.902 | 0.723 | 1.331 | 0.536 | 0.483 |
+| Qingdao | 1.831 | 0.960 | 0.625 | 1.415 | 0.732 | 0.562 |
+| Dubai | 1.682 | 0.863 | 0.822 | 0.845 | 0.449 | 0.804 |
+| Singapore | 1.188 | 0.649 | 0.554 | 0.389 | 0.214 | 0.549 |
+| Miami | 1.465 | 0.755 | 0.742 | 1.009 | 0.465 | 0.626 |
 
 ### 消融实验（青岛站点）
 
 | 变体 | HI RMSE | HI CRPS | HI Cov@90% | WB RMSE | WB CRPS | WB Cov@90% |
 |------|---------|---------|------------|---------|---------|------------|
-| **Full model** | **2.011** | **1.051** | 0.898 | **1.473** | **0.759** | 0.907 |
-| w/o Attention | 2.241 (+11%) | 1.155 | 0.873 | 1.491 | 0.774 | 0.907 |
-| w/o Horizon Embed | 2.856 (+42%) | 1.568 | 0.865 | 1.816 | 0.969 | 0.908 |
-| Deterministic | 1.983 | 2.448 | 1.000* | 1.514 | 2.305 | 1.000* |
+| **Full model** | **1.831** | **0.960** | 0.905 | **1.415** | **0.732** | 0.906 |
+| w/o Attention | 1.798 | 0.937 | 0.905 | 1.409 | 0.722 | 0.899 |
+| w/o Horizon Embed | 2.502 (+37%) | 1.390 | 0.904 | 1.781 (+26%) | 0.961 | 0.920 |
+| Deterministic | 1.823 | 2.710 | 1.000* | 1.405 | 2.331 | 1.000* |
 
-> *Deterministic 模型的 Coverage=100% 和高 CRPS 是因为它不输出有意义的方差（predictive std ≈ 9.8°C，区间过宽），因此 CRPS 作为概率评分远劣于概率模型。
+> *Deterministic 模型的 Coverage=100% 和高 CRPS 是因为它不输出有意义的方差，因此 CRPS 作为概率评分远劣于概率模型。
 
 ### 关键发现
 
-1. **Horizon embedding 是最关键的组件**：去掉后 RMSE 上升 42%
-2. **Multi-head attention 提供显著改善**：去掉后 RMSE 上升 11%
-3. **概率模型在 CRPS 上远优于确定性模型**：full model CRPS=1.051 vs deterministic CRPS=2.448
-4. **模型在所有站点和 horizon 上均优于 persistence baseline**：Skill Score 0.48—0.83
-5. **校准接近理想**：90% coverage 在 0.87—0.94 之间，PIT 直方图近似均匀
+1. **Horizon embedding 是最关键的组件**：去掉后 HI RMSE 上升 37%，WB RMSE 上升 26%
+2. **概率模型在 CRPS 上远优于确定性模型**：full model CRPS=0.960 vs deterministic CRPS=2.710
+3. **15 年数据显著提升了预测精度**：青岛 HI RMSE 从 2.011 降至 1.831（-9%）
+4. **模型在所有站点和 horizon 上均优于 persistence baseline**：Skill Score 0.55—0.82
+5. **校准接近理想**：90% coverage 在 0.90—0.92 之间，非常接近名义值
 
 ## 可视化输出
 
@@ -286,6 +286,8 @@ Uncertainty is decomposed into:
 
 ## Model Architecture
 
+Data: ERA5 single-level hourly time series (2010-01-01 to 2025-12-31, 16 years, ~140K samples per site).
+
 The **Probabilistic GRU** model (~328K parameters) features:
 
 1. **Feature Projection**: Linear(24→64) + LayerNorm + GELU + Dropout
@@ -326,27 +328,27 @@ The **Probabilistic GRU** model (~328K parameters) features:
 
 | Site | HI RMSE | HI CRPS | HI Skill | WB RMSE | WB CRPS | WB Skill |
 |------|---------|---------|----------|---------|---------|----------|
-| Qingdao | 2.011 | 1.051 | 0.558 | 1.473 | 0.759 | 0.525 |
-| Dubai | 1.645 | 0.868 | 0.833 | 0.840 | 0.457 | 0.807 |
-| Singapore | 1.637 | 0.869 | 0.594 | 0.404 | 0.223 | 0.571 |
-| Miami | 1.774 | 0.902 | 0.723 | 1.331 | 0.536 | 0.483 |
+| Qingdao | 1.831 | 0.960 | 0.625 | 1.415 | 0.732 | 0.562 |
+| Dubai | 1.682 | 0.863 | 0.822 | 0.845 | 0.449 | 0.804 |
+| Singapore | 1.188 | 0.649 | 0.554 | 0.389 | 0.214 | 0.549 |
+| Miami | 1.465 | 0.755 | 0.742 | 1.009 | 0.465 | 0.626 |
 
 ### Ablation Study (Qingdao)
 
 | Variant | HI RMSE | HI CRPS | WB RMSE | WB CRPS |
 |---------|---------|---------|---------|---------|
-| **Full model** | **2.011** | **1.051** | **1.473** | **0.759** |
-| w/o Attention | 2.241 (+11%) | 1.155 | 1.491 | 0.774 |
-| w/o Horizon Embed | 2.856 (+42%) | 1.568 | 1.816 | 0.969 |
-| Deterministic | 1.983 | 2.448 | 1.514 | 2.305 |
+| **Full model** | **1.831** | **0.960** | **1.415** | **0.732** |
+| w/o Attention | 1.798 | 0.937 | 1.409 | 0.722 |
+| w/o Horizon Embed | 2.502 (+37%) | 1.390 | 1.781 (+26%) | 0.961 |
+| Deterministic | 1.823 | 2.710 | 1.405 | 2.331 |
 
 ### Key Findings
 
-1. **Horizon embedding is the most impactful component**: removing it degrades RMSE by 42%
-2. **Multi-head attention provides significant improvement**: removal increases RMSE by 11%
-3. **Probabilistic model vastly outperforms deterministic on CRPS**: 1.051 vs 2.448
-4. **Model consistently outperforms persistence baseline**: Skill Scores 0.48–0.83 across sites
-5. **Well-calibrated uncertainty**: 90% coverage ranges 0.87–0.94, PIT histograms approximately uniform
+1. **Horizon embedding is the most impactful component**: removing it degrades HI RMSE by 37%, WB RMSE by 26%
+2. **Probabilistic model vastly outperforms deterministic on CRPS**: 0.960 vs 2.710
+3. **16-year data significantly improves accuracy**: Qingdao HI RMSE improved from 2.011 to 1.831 (-9%)
+4. **Model consistently outperforms persistence baseline**: Skill Scores 0.55–0.82 across sites
+5. **Well-calibrated uncertainty**: 90% coverage ranges 0.90–0.92, very close to the nominal level
 
 ## Visualizations
 

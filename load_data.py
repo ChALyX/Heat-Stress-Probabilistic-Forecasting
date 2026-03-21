@@ -13,6 +13,7 @@ compatibility with the original data path.
 
 import argparse
 import shutil
+import zipfile
 from pathlib import Path
 
 try:
@@ -45,7 +46,7 @@ VARIABLES = [
 ]
 
 DATASET = "reanalysis-era5-single-levels-timeseries"
-DATE_RANGE = "2020-01-01/2026-03-11"
+DATE_RANGE = "2010-01-01/2025-12-31"
 
 
 def download_site(site_name: str, output_dir: str = "data") -> Path:
@@ -78,7 +79,23 @@ def download_site(site_name: str, output_dir: str = "data") -> Path:
     }
 
     client = cdsapi.Client()
-    client.retrieve(DATASET, request, str(output_path))
+    # CDS API may return a zip archive; download to a temp path first.
+    download_path = output_path.with_suffix(".download")
+    client.retrieve(DATASET, request, str(download_path))
+
+    # If the downloaded file is a zip, extract the CSV from it.
+    if zipfile.is_zipfile(download_path):
+        with zipfile.ZipFile(download_path, "r") as zf:
+            csv_names = [n for n in zf.namelist() if n.endswith(".csv")]
+            if not csv_names:
+                raise RuntimeError(f"[{site_name}] ZIP contains no CSV files: {zf.namelist()}")
+            zf.extract(csv_names[0], output_path.parent)
+            extracted = output_path.parent / csv_names[0]
+            extracted.rename(output_path)
+        download_path.unlink()
+    else:
+        download_path.rename(output_path)
+
     print(f"[{site_name}] Saved to: {output_path}")
     return output_path
 
