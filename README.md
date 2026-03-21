@@ -144,10 +144,11 @@ L = weighted_NLL + 0.1 * MSE + 1e-4 * variance_penalty
 ### 关键发现
 
 1. **Horizon embedding 是最关键的组件**：去掉后 HI RMSE 上升 37%，WB RMSE 上升 26%
-2. **概率模型在 CRPS 上远优于确定性模型**：full model CRPS=0.960 vs deterministic CRPS=2.710
-3. **16 年数据显著提升了预测精度**：青岛 HI RMSE 从 2.011 降至 1.831（-9%）
-4. **模型在所有站点和 horizon 上均优于 persistence baseline**：Skill Score 0.55—0.82
-5. **校准接近理想**：90% coverage 在 0.90—0.92 之间，非常接近名义值
+2. **多头注意力未带来显著提升**：w/o Attention 变体在所有指标上均略优于 Full Model（HI RMSE 1.798 vs 1.831, CRPS 0.937 vs 0.960），差异约 1-2%，处于随机噪声范围内。这说明对于基于单点时序的热应激预测任务，GRU 最后隐状态已编码了足够的时序信息，额外的注意力聚合未能提供有意义的增益，反而因引入约 33K 额外参数略微增加了过拟合风险。这一发现提示：**模型设计应优先投入在输出端的结构创新（如 horizon embedding）而非编码端的复杂化**
+3. **概率模型在 CRPS 上远优于确定性模型**：full model CRPS=0.960 vs deterministic CRPS=2.710
+4. **16 年数据显著提升了预测精度**：青岛 HI RMSE 从 2.011 降至 1.831（-9%）
+5. **模型在所有站点和 horizon 上均优于 persistence baseline**：Skill Score 0.55—0.82
+6. **校准接近理想**：90% coverage 在 0.90—0.92 之间，非常接近名义值
 
 ---
 
@@ -203,14 +204,14 @@ L = weighted_NLL + 0.1 * MSE + 1e-4 * variance_penalty
 上图展示了青岛站点上四种模型变体在 RMSE、MAE、CRPS、Winkler Score 上的表现。关键观察：
 
 - **去掉 horizon embedding**（nohorizon）是影响最大的消融：HI RMSE 从 1.831 飙升至 2.502（+37%），说明让模型区分不同预测时间步的能力至关重要
-- **去掉多头注意力**（noattn）对点预测影响很小（RMSE 甚至略微下降），但在概率评分（CRPS）上有所退步，表明注意力机制主要改善了不确定性建模
+- **去掉多头注意力**（noattn）在所有指标上均略优于全模型（HI RMSE 1.798 vs 1.831, HI CRPS 0.937 vs 0.960），差异约 1-2%。这说明在基于单点时序的任务中，GRU 最后隐状态已充分编码时序信息，额外的 4 头注意力聚合未能提供有意义增益，反而因引入约 33K 额外参数轻微增加了过拟合风险。这一发现提示模型设计应优先投入在输出端结构创新（horizon embedding）而非编码端复杂化
 - **确定性基线**的 RMSE 与全模型接近，但 CRPS 和 Winkler Score 远劣于概率模型，说明概率建模的核心价值在于不确定性量化而非点预测精度
 
 #### 3.2 Skill Score 对比
 
 ![Skill Score 对比](results/ablation_skill_score.png)
 
-Persistence Skill Score 反映模型相对于"用当前值预测未来"基线的改善程度。全模型在两个目标上都达到了 0.56-0.63 的 Skill Score。去掉 horizon embedding 后 Skill Score 大幅下降（HI: 0.63→0.30），进一步验证了 horizon embedding 对长程预测的关键作用。
+Persistence Skill Score 反映模型相对于"用当前值预测未来"基线的改善程度。全模型在两个目标上都达到了 0.56-0.63 的 Skill Score。值得注意的是，w/o Attention 变体的 Skill Score（HI: 0.638, WB: 0.565）略高于全模型（HI: 0.625, WB: 0.562），再次印证了注意力机制对该任务无正面贡献。去掉 horizon embedding 后 Skill Score 大幅下降（HI: 0.63→0.30），进一步验证了 horizon embedding 才是对长程预测最关键的组件。
 
 ---
 
@@ -511,10 +512,11 @@ The **Probabilistic GRU** model (~328K parameters) features:
 ### Key Findings
 
 1. **Horizon embedding is the most impactful component**: removing it degrades HI RMSE by 37%, WB RMSE by 26%
-2. **Probabilistic model vastly outperforms deterministic on CRPS**: 0.960 vs 2.710
-3. **16-year data significantly improves accuracy**: Qingdao HI RMSE improved from 2.011 to 1.831 (-9%)
-4. **Model consistently outperforms persistence baseline**: Skill Scores 0.55-0.82 across sites
-5. **Well-calibrated uncertainty**: 90% coverage ranges 0.90-0.92, very close to the nominal level
+2. **Multi-head attention provides no significant benefit**: the w/o Attention variant slightly outperforms the Full Model on all metrics (HI RMSE 1.798 vs 1.831, CRPS 0.937 vs 0.960), with differences of ~1-2% within noise range. This suggests that for single-point time series forecasting, the GRU's last hidden state already encodes sufficient temporal information, and the additional 4-head attention aggregation (~33K extra parameters) introduces slight overfitting. This finding indicates that **model design should prioritize output-side structural innovations (horizon embedding) over encoder-side complexity**
+3. **Probabilistic model vastly outperforms deterministic on CRPS**: 0.960 vs 2.710
+4. **16-year data significantly improves accuracy**: Qingdao HI RMSE improved from 2.011 to 1.831 (-9%)
+5. **Model consistently outperforms persistence baseline**: Skill Scores 0.55-0.82 across sites
+6. **Well-calibrated uncertainty**: 90% coverage ranges 0.90-0.92, very close to the nominal level
 
 ---
 
@@ -562,13 +564,13 @@ Normalized radar chart showing each site's performance across RMSE, MAE, CRPS, a
 
 ![Ablation Comparison](results/ablation_comparison.png)
 
-Removing **horizon embedding** causes the largest degradation: HI RMSE jumps from 1.831 to 2.502 (+37%). Removing **attention** has minimal impact on point forecasts but degrades probabilistic scoring. The **deterministic** baseline matches point forecast accuracy but has far worse CRPS and Winkler scores.
+Removing **horizon embedding** causes the largest degradation: HI RMSE jumps from 1.831 to 2.502 (+37%). Removing **attention** actually yields marginally better results across all metrics (HI RMSE 1.798 vs 1.831, CRPS 0.937 vs 0.960), with ~1-2% differences within noise. This indicates that for single-point time series tasks, the GRU's last hidden state sufficiently encodes temporal context, and the extra ~33K attention parameters introduce slight overfitting rather than useful capacity. The **deterministic** baseline matches point forecast accuracy but has far worse CRPS and Winkler scores.
 
 #### 3.2 Skill Score Comparison
 
 ![Ablation Skill Score](results/ablation_skill_score.png)
 
-Full model achieves Skill Scores of 0.56-0.63. Removing horizon embedding halves the skill (HI: 0.63 to 0.30), confirming its critical role in long-range forecasting.
+Full model achieves Skill Scores of 0.56-0.63. Notably, the w/o Attention variant achieves slightly higher Skill Scores (HI: 0.638 vs 0.625, WB: 0.565 vs 0.562), again confirming that attention does not benefit this task. Removing horizon embedding halves the skill (HI: 0.63 to 0.30), confirming that horizon embedding — not attention — is the critical component for long-range forecasting.
 
 ---
 
