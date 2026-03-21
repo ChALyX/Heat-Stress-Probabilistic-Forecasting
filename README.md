@@ -145,38 +145,176 @@ L = weighted_NLL + 0.1 * MSE + 1e-4 * variance_penalty
 
 1. **Horizon embedding 是最关键的组件**：去掉后 HI RMSE 上升 37%，WB RMSE 上升 26%
 2. **概率模型在 CRPS 上远优于确定性模型**：full model CRPS=0.960 vs deterministic CRPS=2.710
-3. **15 年数据显著提升了预测精度**：青岛 HI RMSE 从 2.011 降至 1.831（-9%）
+3. **16 年数据显著提升了预测精度**：青岛 HI RMSE 从 2.011 降至 1.831（-9%）
 4. **模型在所有站点和 horizon 上均优于 persistence baseline**：Skill Score 0.55—0.82
 5. **校准接近理想**：90% coverage 在 0.90—0.92 之间，非常接近名义值
 
-## 可视化输出
+---
 
-### 单模型评估图表（`results/eval_{variant}_{site}_*.png`）
+## 可视化分析
 
-| 图表 | 说明 |
-|------|------|
-| `horizon_plot.png` | RMSE/MAE 和 Aleatoric/Epistemic 随 horizon 变化 |
-| `sample_decomposition.png` | 单样本不确定性分解（真值 vs 预测均值 + 不确定性带） |
-| `calibration.png` | 校准曲线：期望覆盖率 vs 观测覆盖率 |
-| `pit_histogram.png` | PIT 直方图（理想为均匀分布） |
-| `skill_score.png` | 模型 RMSE vs Persistence RMSE 及 Skill Score |
-| `crps_horizon.png` | CRPS 和 Winkler Score 随 horizon 变化 |
-| `error_distribution.png` | 误差分布直方图 + 按 horizon 的误差箱线图 |
+### 1. 训练过程
 
-### 跨实验综合分析图表（`python visualize.py` 生成）
+#### 1.1 全部模型训练曲线
 
-| 图表 | 说明 |
-|------|------|
-| `training_curves_all.png` | 所有模型变体的训练/验证损失曲线 |
-| `training_curves_qingdao.png` | 青岛消融实验的损失曲线对比 |
-| `cross_site_comparison.png` | 四站点 RMSE/MAE/CRPS/Coverage/Skill Score 分组柱状图 |
-| `cross_site_radar.png` | 四站点性能雷达图 |
-| `ablation_comparison.png` | 消融实验指标柱状图 |
-| `ablation_skill_score.png` | 消融实验 Skill Score 对比 |
-| `uncertainty_decomposition_summary.png` | 四站点 Aleatoric vs Epistemic 不确定性对比 |
-| `seasonal_analysis_{site}.png` | 各站点按季节分解的 RMSE/MAE 和 Coverage |
-| `feature_importance.png` | 排列特征重要性（Top-15） |
-| `feature_importance.csv` | 全部特征重要性数值 |
+![训练曲线 — 全部变体](results/training_curves_all.png)
+
+上图展示了所有 7 个模型变体（4 站点全模型 + 3 个青岛消融变体）的训练损失（左）和验证损失（右）随 epoch 的变化。可以观察到：
+
+- 所有模型在约 20-30 个 epoch 内收敛，CosineAnnealingLR 调度器使学习率在后期平滑衰减
+- 各站点全模型的最终验证损失存在差异，反映了不同气候区的预测难度差异
+- Early stopping 在 patience=10 的设置下有效防止了过拟合
+
+#### 1.2 青岛消融实验训练曲线
+
+![训练曲线 — 青岛消融](results/training_curves_qingdao.png)
+
+青岛站点上四种消融变体的训练动态对比。去掉 horizon embedding 的模型（nohorizon）收敛到更高的损失平台，直接说明 horizon embedding 对模型表达能力的重要性。确定性模型使用 MSE 损失，数值尺度不同，但其收敛趋势同样稳定。
+
+---
+
+### 2. 跨站点性能对比
+
+#### 2.1 多指标分组柱状图
+
+![跨站点对比](results/cross_site_comparison.png)
+
+上图通过分组柱状图直观对比了四个站点在 RMSE、MAE、CRPS、Coverage@90% 和 Skill Score 上的表现。对于两个预测目标（Heat Index 和 WBGT-like），可以看到：
+
+- **新加坡**的 WBGT-like 预测误差最低（RMSE=0.389°C），这是因为热带气候全年温湿度变化幅度小
+- **迪拜**的 Skill Score 最高（HI: 0.822, WB: 0.804），说明在干旱气候下模型相对于 persistence 基线的优势最大
+- **青岛**的误差相对较高，反映了温带季风气候的强季节性和天气系统复杂性
+- 所有站点 Coverage@90% 均在 0.90-0.92 之间，说明概率校准在不同气候条件下均保持良好
+
+#### 2.2 雷达图
+
+![跨站点雷达图](results/cross_site_radar.png)
+
+雷达图以归一化方式展示各站点在 RMSE、MAE、CRPS 和 Coverage 四个维度上的综合表现（外侧更优）。新加坡和迪拜的多边形面积明显大于青岛和迈阿密，说明模型在稳定气候区的预测效果更好。
+
+---
+
+### 3. 消融实验对比
+
+#### 3.1 消融指标柱状图
+
+![消融实验对比](results/ablation_comparison.png)
+
+上图展示了青岛站点上四种模型变体在 RMSE、MAE、CRPS、Winkler Score 上的表现。关键观察：
+
+- **去掉 horizon embedding**（nohorizon）是影响最大的消融：HI RMSE 从 1.831 飙升至 2.502（+37%），说明让模型区分不同预测时间步的能力至关重要
+- **去掉多头注意力**（noattn）对点预测影响很小（RMSE 甚至略微下降），但在概率评分（CRPS）上有所退步，表明注意力机制主要改善了不确定性建模
+- **确定性基线**的 RMSE 与全模型接近，但 CRPS 和 Winkler Score 远劣于概率模型，说明概率建模的核心价值在于不确定性量化而非点预测精度
+
+#### 3.2 Skill Score 对比
+
+![Skill Score 对比](results/ablation_skill_score.png)
+
+Persistence Skill Score 反映模型相对于"用当前值预测未来"基线的改善程度。全模型在两个目标上都达到了 0.56-0.63 的 Skill Score。去掉 horizon embedding 后 Skill Score 大幅下降（HI: 0.63→0.30），进一步验证了 horizon embedding 对长程预测的关键作用。
+
+---
+
+### 4. 不确定性分析
+
+#### 4.1 不确定性分解
+
+![不确定性分解](results/uncertainty_decomposition_summary.png)
+
+上图对比了四个站点的 aleatoric（数据噪声）和 epistemic（模型认知）不确定性。可以看到：
+
+- **Aleatoric 不确定性**在所有站点上都显著大于 epistemic 不确定性，说明预测误差的主要来源是天气系统的内在不可预测性
+- **青岛**的两种不确定性都最大，与其强季节性变化和复杂的天气系统（季风、冷空气南下）一致
+- **新加坡**的 epistemic 不确定性几乎可以忽略（≈0.07°C），反映了热带气候的高度规律性使模型能够充分学习
+
+#### 4.2 预测区间校准（以青岛为例）
+
+![校准曲线](results/eval_full_qingdao_calibration.png)
+
+校准曲线展示了不同置信度下的期望覆盖率与实际覆盖率的关系。两条曲线均紧贴对角线，说明模型输出的概率分布是良好校准的——例如 90% 的预测区间确实覆盖了约 90% 的真实值。
+
+#### 4.3 PIT 直方图（以青岛为例）
+
+![PIT 直方图](results/eval_full_qingdao_pit_histogram.png)
+
+PIT（Probability Integral Transform）直方图是概率校准的标准诊断工具。对于完美校准的模型，PIT 值应服从均匀分布（直方图应为平坦的）。两个目标的 PIT 直方图都接近均匀，进一步确认了模型的概率校准质量。
+
+#### 4.4 单样本不确定性分解（以青岛为例）
+
+![样本分解](results/eval_full_qingdao_sample_decomposition.png)
+
+该图选取了 epistemic 不确定性最高的测试样本，展示了 24 小时预测轨迹。绿色带为总不确定性区间，黄色带为 aleatoric 不确定性区间，蓝线为预测均值，黑点为真值。可以看到真值几乎都落在不确定性带内，且 epistemic 不确定性（绿-黄差值）在长 horizon 时增大。
+
+---
+
+### 5. 预测诊断
+
+#### 5.1 Horizon 诊断（以青岛为例）
+
+![Horizon 诊断](results/eval_full_qingdao_horizon_plot.png)
+
+左列展示 RMSE 和 MAE 随预测时间步的增长趋势，右列展示 aleatoric 和 epistemic 不确定性。RMSE 随 horizon 近似线性增长，从 h=1 的约 0.5°C 增长到 h=24 的约 3°C，符合天气预报可预测性随时间衰减的物理规律。
+
+#### 5.2 CRPS 与 Winkler Score（以青岛为例）
+
+![CRPS Horizon](results/eval_full_qingdao_crps_horizon.png)
+
+CRPS 是综合评估概率预测质量的 proper scoring rule。随着 horizon 增加，CRPS 和 Winkler Score 都单调增长，但增长速率在 h>18 后略有放缓，说明 horizon-weighted loss 在一定程度上改善了远期预测。
+
+#### 5.3 Skill Score（以青岛为例）
+
+![Skill Score](results/eval_full_qingdao_skill_score.png)
+
+模型 RMSE（红线）在所有 horizon 上都低于 persistence baseline（灰虚线），Skill Score（绿色填充区域）从 h=1 的约 0.2 逐步上升到 h=24 的约 0.7。这说明**模型在长 horizon 上的优势更大**——短期预报中 persistence 本身就有较好表现，但随着时间推移模型的知识提取能力体现出显著优势。
+
+#### 5.4 误差分布分析（以青岛为例）
+
+![误差分布](results/eval_full_qingdao_error_distribution.png)
+
+左列为误差直方图（预测值 - 真值），均以 0 为中心且近似对称，说明模型无系统性偏差。右列为逐 horizon 的误差箱线图，可以看到误差分布的扩散随 horizon 增加而增大，但中位数始终接近零。
+
+---
+
+### 6. 季节性分析
+
+#### 6.1 青岛
+
+![季节分析 — 青岛](results/seasonal_analysis_qingdao.png)
+
+青岛的季节性差异最为显著：**夏季（JJA）** RMSE 最高（HI: ~2.4°C），因为夏季高温高湿天气多变；**冬季（DJF）** RMSE 最低（HI: ~1.2°C），因为冬季温湿度变化较平稳。Coverage@90% 在四个季节间保持稳定（0.89-0.92），说明模型的不确定性估计能够自适应地调整。
+
+#### 6.2 迪拜
+
+![季节分析 — 迪拜](results/seasonal_analysis_dubai.png)
+
+迪拜同样呈现夏高冬低的模式。夏季（JJA）HI RMSE 约 2.0°C，冬季仅约 0.8°C。由于迪拜极端干热的夏季气候稳定性反而较高（无季风系统），WBGT-like 的预测误差全年都维持在较低水平（< 1.0°C）。
+
+#### 6.3 新加坡
+
+![季节分析 — 新加坡](results/seasonal_analysis_singapore.png)
+
+新加坡作为赤道热带城市，四季温差极小。因此 RMSE 在各季节间差异不大（HI: 1.1-1.3°C），WBGT-like 全年稳定在 0.3-0.5°C。这是四个站点中季节性最弱的，与其热带气候特征完全一致。
+
+#### 6.4 迈阿密
+
+![季节分析 — 迈阿密](results/seasonal_analysis_miami.png)
+
+迈阿密介于青岛和新加坡之间，夏季（JJA）受飓风季和高湿度影响，HI RMSE 较高（~1.8°C）；冬季亚热带温和气候下误差较低（~0.9°C）。Coverage@90% 在所有季节都保持在 0.90-0.93 的良好范围。
+
+---
+
+### 7. 特征重要性
+
+![特征重要性](results/feature_importance.png)
+
+通过排列重要性（Permutation Importance）分析了青岛全模型中 24 个输入特征对预测的贡献。方法：依次打乱每个特征的值，观察 MSE 的增量（增量越大说明该特征越重要）。
+
+关键发现：
+
+- **相对湿度（relative_humidity）** 和 **2m 气温（t2m_c）** 是两个目标的最重要特征，这与 Heat Index 和 WBGT 的物理公式直接依赖温度和湿度一致
+- **露点温度（d2m_c）** 紧随其后，它是计算相对湿度的核心变量
+- **短波辐射（ssrd_wm2）** 对 WBGT-like 的重要性高于对 HI 的重要性，因为 WBGT 包含了辐射热负荷的显式建模
+- **时间编码特征**（hour_sin, doy_sin 等）有中等重要性，帮助模型捕捉日变化和季节模式
+- **海表温度（sst_c）** 和 **海-气温差（sea_air_temp_gap_c）** 有一定贡献，反映了海洋对沿海城市热应激的调节作用
 
 ## 使用方法
 
@@ -361,48 +499,176 @@ The **Probabilistic GRU** model (~328K parameters) features:
 
 ### Ablation Study (Qingdao)
 
-| Variant | HI RMSE | HI CRPS | WB RMSE | WB CRPS |
-|---------|---------|---------|---------|---------|
-| **Full model** | **1.831** | **0.960** | **1.415** | **0.732** |
-| w/o Attention | 1.798 | 0.937 | 1.409 | 0.722 |
-| w/o Horizon Embed | 2.502 (+37%) | 1.390 | 1.781 (+26%) | 0.961 |
-| Deterministic | 1.823 | 2.710 | 1.405 | 2.331 |
+| Variant | HI RMSE | HI CRPS | HI Cov@90% | WB RMSE | WB CRPS | WB Cov@90% |
+|---------|---------|---------|------------|---------|---------|------------|
+| **Full model** | **1.831** | **0.960** | 0.905 | **1.415** | **0.732** | 0.906 |
+| w/o Attention | 1.798 | 0.937 | 0.905 | 1.409 | 0.722 | 0.899 |
+| w/o Horizon Embed | 2.502 (+37%) | 1.390 | 0.904 | 1.781 (+26%) | 0.961 | 0.920 |
+| Deterministic | 1.823 | 2.710 | 1.000* | 1.405 | 2.331 | 1.000* |
+
+> *The deterministic model has Coverage=100% and poor CRPS because it does not output meaningful variance. CRPS as a probabilistic score is far worse than the probabilistic model.
 
 ### Key Findings
 
 1. **Horizon embedding is the most impactful component**: removing it degrades HI RMSE by 37%, WB RMSE by 26%
 2. **Probabilistic model vastly outperforms deterministic on CRPS**: 0.960 vs 2.710
 3. **16-year data significantly improves accuracy**: Qingdao HI RMSE improved from 2.011 to 1.831 (-9%)
-4. **Model consistently outperforms persistence baseline**: Skill Scores 0.55–0.82 across sites
-5. **Well-calibrated uncertainty**: 90% coverage ranges 0.90–0.92, very close to the nominal level
+4. **Model consistently outperforms persistence baseline**: Skill Scores 0.55-0.82 across sites
+5. **Well-calibrated uncertainty**: 90% coverage ranges 0.90-0.92, very close to the nominal level
 
-## Visualizations
+---
 
-### Per-Model Evaluation (`test.py`)
+## Visual Analysis
 
-| Figure | Description |
-|--------|------------|
-| `horizon_plot.png` | RMSE/MAE and uncertainty evolution over forecast horizon |
-| `sample_decomposition.png` | Single-sample trajectory with aleatoric/total uncertainty bands |
-| `calibration.png` | Expected vs observed coverage at multiple confidence levels |
-| `pit_histogram.png` | PIT histogram (ideal: uniform) |
-| `skill_score.png` | Model RMSE vs persistence RMSE with skill score |
-| `crps_horizon.png` | CRPS and Winkler Score by forecast horizon |
-| `error_distribution.png` | Error histogram and per-horizon error boxplots |
+### 1. Training Process
 
-### Cross-Experiment Analysis (`visualize.py`)
+#### 1.1 Training Curves — All Variants
 
-| Figure | Description |
-|--------|------------|
-| `training_curves_all.png` | Training/validation loss curves for all model variants |
-| `training_curves_qingdao.png` | Ablation loss curves comparison (Qingdao) |
-| `cross_site_comparison.png` | Grouped bar charts comparing 4 sites across all metrics |
-| `cross_site_radar.png` | Radar chart for cross-site performance comparison |
-| `ablation_comparison.png` | Ablation study metrics bar chart |
-| `ablation_skill_score.png` | Ablation skill score comparison |
-| `uncertainty_decomposition_summary.png` | Aleatoric vs Epistemic uncertainty across sites |
-| `seasonal_analysis_{site}.png` | Per-season RMSE/MAE and coverage breakdown |
-| `feature_importance.png` | Permutation feature importance (top-15) |
+![Training Curves — All Variants](results/training_curves_all.png)
+
+Training loss (left) and validation loss (right) over epochs for all 7 model variants (4 full-site models + 3 Qingdao ablation variants). All models converge within ~20-30 epochs. CosineAnnealingLR provides smooth late-stage decay and early stopping (patience=10) prevents overfitting.
+
+#### 1.2 Ablation Training Curves — Qingdao
+
+![Training Curves — Qingdao Ablation](results/training_curves_qingdao.png)
+
+The no-horizon-embed variant converges to a distinctly higher loss plateau, directly demonstrating the importance of horizon embeddings for model expressiveness.
+
+---
+
+### 2. Cross-Site Performance
+
+#### 2.1 Multi-Metric Bar Charts
+
+![Cross-Site Comparison](results/cross_site_comparison.png)
+
+Grouped bar charts comparing four sites across RMSE, MAE, CRPS, Coverage@90%, and Skill Score. Key observations:
+
+- **Singapore** achieves the lowest WBGT-like errors (RMSE=0.389°C) due to minimal tropical temperature variability
+- **Dubai** shows the highest Skill Score (HI: 0.822, WB: 0.804), indicating the greatest advantage over persistence baseline in arid climates
+- All sites maintain Coverage@90% between 0.90-0.92, confirming robust probabilistic calibration across climates
+
+#### 2.2 Radar Chart
+
+![Cross-Site Radar](results/cross_site_radar.png)
+
+Normalized radar chart showing each site's performance across RMSE, MAE, CRPS, and Coverage (outer = better). Singapore and Dubai show larger polygon areas, indicating better overall performance in more climatically stable regions.
+
+---
+
+### 3. Ablation Study
+
+#### 3.1 Ablation Metrics
+
+![Ablation Comparison](results/ablation_comparison.png)
+
+Removing **horizon embedding** causes the largest degradation: HI RMSE jumps from 1.831 to 2.502 (+37%). Removing **attention** has minimal impact on point forecasts but degrades probabilistic scoring. The **deterministic** baseline matches point forecast accuracy but has far worse CRPS and Winkler scores.
+
+#### 3.2 Skill Score Comparison
+
+![Ablation Skill Score](results/ablation_skill_score.png)
+
+Full model achieves Skill Scores of 0.56-0.63. Removing horizon embedding halves the skill (HI: 0.63 to 0.30), confirming its critical role in long-range forecasting.
+
+---
+
+### 4. Uncertainty Analysis
+
+#### 4.1 Uncertainty Decomposition Across Sites
+
+![Uncertainty Decomposition](results/uncertainty_decomposition_summary.png)
+
+Aleatoric (data noise) uncertainty dominates over epistemic (model) uncertainty at all sites. Qingdao has the highest uncertainty due to strong monsoon seasonality, while Singapore's epistemic uncertainty is nearly negligible (~0.07°C).
+
+#### 4.2 Calibration Curve (Qingdao)
+
+![Calibration](results/eval_full_qingdao_calibration.png)
+
+Expected vs observed coverage at multiple confidence levels. Both curves closely follow the diagonal, indicating well-calibrated predictive distributions.
+
+#### 4.3 PIT Histogram (Qingdao)
+
+![PIT Histogram](results/eval_full_qingdao_pit_histogram.png)
+
+PIT (Probability Integral Transform) values should be uniformly distributed for a well-calibrated model. Both targets show near-uniform histograms, confirming calibration quality.
+
+#### 4.4 Sample Uncertainty Decomposition (Qingdao)
+
+![Sample Decomposition](results/eval_full_qingdao_sample_decomposition.png)
+
+24-hour forecast trajectory for the test sample with highest epistemic uncertainty. Green band = total uncertainty, yellow band = aleatoric, blue line = predicted mean, black dots = ground truth. Epistemic uncertainty grows with forecast horizon.
+
+---
+
+### 5. Forecast Diagnostics
+
+#### 5.1 Horizon Diagnostics (Qingdao)
+
+![Horizon Plot](results/eval_full_qingdao_horizon_plot.png)
+
+RMSE grows approximately linearly from ~0.5°C at h=1 to ~3°C at h=24, consistent with the physical decay of weather predictability over time.
+
+#### 5.2 CRPS & Winkler Score (Qingdao)
+
+![CRPS Horizon](results/eval_full_qingdao_crps_horizon.png)
+
+Both CRPS and Winkler Score increase monotonically with horizon, with slight deceleration beyond h=18, suggesting the horizon-weighted loss partially improves long-range predictions.
+
+#### 5.3 Skill Score vs Horizon (Qingdao)
+
+![Skill Score](results/eval_full_qingdao_skill_score.png)
+
+Model RMSE (red) stays below persistence RMSE (gray dashed) at all horizons. Skill Score rises from ~0.2 at h=1 to ~0.7 at h=24 — the model's advantage is greatest at longer horizons where persistence fails.
+
+#### 5.4 Error Distribution (Qingdao)
+
+![Error Distribution](results/eval_full_qingdao_error_distribution.png)
+
+Error histograms (left) are centered at zero and approximately symmetric — no systematic bias. Per-horizon boxplots (right) show increasing error spread with horizon while maintaining zero-centered medians.
+
+---
+
+### 6. Seasonal Analysis
+
+#### 6.1 Qingdao
+
+![Seasonal — Qingdao](results/seasonal_analysis_qingdao.png)
+
+Strongest seasonality among all sites: **summer (JJA)** has the highest RMSE (HI: ~2.4°C) due to variable hot-humid weather, while **winter (DJF)** has the lowest (~1.2°C). Coverage@90% remains stable across seasons (0.89-0.92), showing adaptive uncertainty estimation.
+
+#### 6.2 Dubai
+
+![Seasonal — Dubai](results/seasonal_analysis_dubai.png)
+
+Summer-high, winter-low pattern. Summer HI RMSE ~2.0°C, winter ~0.8°C. WBGT-like errors stay below 1.0°C year-round due to Dubai's consistently stable arid conditions.
+
+#### 6.3 Singapore
+
+![Seasonal — Singapore](results/seasonal_analysis_singapore.png)
+
+Minimal seasonal variation as expected for an equatorial tropical city. HI RMSE ranges only 1.1-1.3°C across seasons, WBGT-like is stable at 0.3-0.5°C — the weakest seasonality among all sites.
+
+#### 6.4 Miami
+
+![Seasonal — Miami](results/seasonal_analysis_miami.png)
+
+Intermediate seasonality. Summer (JJA) HI RMSE ~1.8°C due to hurricane season and high humidity; winter ~0.9°C. Coverage@90% maintains 0.90-0.93 across all seasons.
+
+---
+
+### 7. Feature Importance
+
+![Feature Importance](results/feature_importance.png)
+
+Permutation importance analysis for the Qingdao full model (24 input features). Each feature is shuffled independently and the resulting MSE increase quantifies its contribution.
+
+Key findings:
+
+- **Relative humidity** and **2m temperature (t2m_c)** are the most important features for both targets, consistent with the physical dependence of Heat Index and WBGT on temperature and humidity
+- **Dewpoint temperature (d2m_c)** ranks third — it is the core variable for computing relative humidity
+- **Shortwave radiation (ssrd_wm2)** is more important for WBGT-like than for HI, as WBGT explicitly models radiative heat load
+- **Temporal encodings** (hour_sin, doy_sin) have moderate importance, helping capture diurnal and seasonal patterns
+- **Sea surface temperature (sst_c)** and **sea-air temperature gap** contribute meaningfully, reflecting the ocean's modulating effect on coastal heat stress
 
 ## Usage
 
