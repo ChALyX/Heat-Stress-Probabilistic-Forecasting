@@ -151,7 +151,7 @@ L = weighted_NLL + 0.1 * MSE + 1e-4 * variance_penalty
 
 ## 可视化输出
 
-每次评估会生成以下图表（以 `results/eval_{variant}_{site}_*.png` 命名）：
+### 单模型评估图表（`results/eval_{variant}_{site}_*.png`）
 
 | 图表 | 说明 |
 |------|------|
@@ -163,6 +163,21 @@ L = weighted_NLL + 0.1 * MSE + 1e-4 * variance_penalty
 | `crps_horizon.png` | CRPS 和 Winkler Score 随 horizon 变化 |
 | `error_distribution.png` | 误差分布直方图 + 按 horizon 的误差箱线图 |
 
+### 跨实验综合分析图表（`python visualize.py` 生成）
+
+| 图表 | 说明 |
+|------|------|
+| `training_curves_all.png` | 所有模型变体的训练/验证损失曲线 |
+| `training_curves_qingdao.png` | 青岛消融实验的损失曲线对比 |
+| `cross_site_comparison.png` | 四站点 RMSE/MAE/CRPS/Coverage/Skill Score 分组柱状图 |
+| `cross_site_radar.png` | 四站点性能雷达图 |
+| `ablation_comparison.png` | 消融实验指标柱状图 |
+| `ablation_skill_score.png` | 消融实验 Skill Score 对比 |
+| `uncertainty_decomposition_summary.png` | 四站点 Aleatoric vs Epistemic 不确定性对比 |
+| `seasonal_analysis_{site}.png` | 各站点按季节分解的 RMSE/MAE 和 Coverage |
+| `feature_importance.png` | 排列特征重要性（Top-15） |
+| `feature_importance.csv` | 全部特征重要性数值 |
+
 ## 使用方法
 
 ### 安装依赖
@@ -172,7 +187,7 @@ python -m venv .venv
 .venv/bin/pip install numpy torch scipy matplotlib
 ```
 
-### 下载数据
+### 下载数据（需要 CDS API key）
 
 ```bash
 pip install cdsapi
@@ -205,12 +220,23 @@ python test.py --checkpoint-path checkpoints/full_qingdao.pt --data-path data/er
 python test.py --checkpoint-path checkpoints/full_qingdao.pt --data-path data/era5_qingdao.csv --output-path results/eval_full_qingdao.json --ablation-dir checkpoints
 ```
 
+### 跨实验综合可视化
+
+```bash
+# 生成所有跨实验对比图表（训练曲线、跨站点对比、消融对比、季节分析、特征重要性）
+python visualize.py
+
+# 跳过耗时的模型推理步骤
+python visualize.py --skip-seasonal --skip-importance
+```
+
 ## 项目结构
 
 ```text
 .
 ├── train.py              # 模型定义、特征工程、训练循环
 ├── test.py               # 评估脚本、指标计算、图表生成
+├── visualize.py          # 跨实验综合可视化
 ├── load_data.py           # ERA5 数据下载工具
 ├── README.md
 ├── data/
@@ -352,7 +378,7 @@ The **Probabilistic GRU** model (~328K parameters) features:
 
 ## Visualizations
 
-Each evaluation produces 7 publication-quality figures:
+### Per-Model Evaluation (`test.py`)
 
 | Figure | Description |
 |--------|------------|
@@ -363,6 +389,20 @@ Each evaluation produces 7 publication-quality figures:
 | `skill_score.png` | Model RMSE vs persistence RMSE with skill score |
 | `crps_horizon.png` | CRPS and Winkler Score by forecast horizon |
 | `error_distribution.png` | Error histogram and per-horizon error boxplots |
+
+### Cross-Experiment Analysis (`visualize.py`)
+
+| Figure | Description |
+|--------|------------|
+| `training_curves_all.png` | Training/validation loss curves for all model variants |
+| `training_curves_qingdao.png` | Ablation loss curves comparison (Qingdao) |
+| `cross_site_comparison.png` | Grouped bar charts comparing 4 sites across all metrics |
+| `cross_site_radar.png` | Radar chart for cross-site performance comparison |
+| `ablation_comparison.png` | Ablation study metrics bar chart |
+| `ablation_skill_score.png` | Ablation skill score comparison |
+| `uncertainty_decomposition_summary.png` | Aleatoric vs Epistemic uncertainty across sites |
+| `seasonal_analysis_{site}.png` | Per-season RMSE/MAE and coverage breakdown |
+| `feature_importance.png` | Permutation feature importance (top-15) |
 
 ## Usage
 
@@ -405,12 +445,23 @@ python test.py --checkpoint-path checkpoints/full_qingdao.pt --data-path data/er
 python test.py --checkpoint-path checkpoints/full_qingdao.pt --data-path data/era5_qingdao.csv --output-path results/eval_full_qingdao.json --ablation-dir checkpoints
 ```
 
+### Cross-Experiment Visualization
+
+```bash
+# Generate all cross-experiment figures (training curves, cross-site, ablation, seasonal, feature importance)
+python visualize.py
+
+# Skip slow model inference steps
+python visualize.py --skip-seasonal --skip-importance
+```
+
 ## Project Structure
 
 ```text
 .
 ├── train.py              # Model definition, feature engineering, training loop
 ├── test.py               # Evaluation, metrics, visualization
+├── visualize.py          # Cross-experiment analysis & visualization
 ├── load_data.py           # ERA5 data download utility
 ├── README.md
 ├── data/                  # ERA5 CSV data files (4 sites)
