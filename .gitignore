@@ -29,8 +29,6 @@ Coursework_Requirement.md
 # Slides build artifacts
 slides/node_modules/
 slides/dist/
-slides/*.pdf
-slides/*.pptx
 
 # Matplotlib cache
 .matplotlib/
