@@ -20,8 +20,17 @@ env/
 .DS_Store
 Thumbs.db
 
-# Large data files (tracked via README instructions)
-# data/*.csv
+# Large data files
+data/
+
+# Coursework requirement
+Coursework_Requirement.md
+
+# Slides build artifacts
+slides/node_modules/
+slides/dist/
+slides/*.pdf
+slides/*.pptx
 
 # Matplotlib cache
 .matplotlib/

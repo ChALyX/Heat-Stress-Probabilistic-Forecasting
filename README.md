@@ -52,7 +52,7 @@ data/era5_miami.csv
 
 核心模型为 **Probabilistic GRU**（`train.py` 中的 `ProbabilisticGRU` 类），共约 **328,000 个可训练参数**。
 
-![模型架构图](results/model_architecture.png)
+![模型架构图](results/arc-white.png)
 
 ### 关键设计
 
@@ -446,7 +446,7 @@ Data: ERA5 single-level hourly time series (2010-01-01 to 2025-12-31, 16 years, 
 
 The **Probabilistic GRU** model (~328K parameters):
 
-![Model Architecture](results/model_architecture.png)
+![Model Architecture](results/arc-white.png)
 
 1. **Feature Projection**: Linear(24→64) + LayerNorm + GELU + Dropout
 2. **GRU Encoder**: 2-layer GRU (hidden_size=128) over 72-hour lookback
