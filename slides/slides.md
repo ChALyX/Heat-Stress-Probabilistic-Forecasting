@@ -139,6 +139,144 @@ ERA5 provides global, consistent reanalysis data at hourly resolution. We engine
 -->
 
 ---
+layout: section
+---
+
+# Exploratory Data Analysis
+
+---
+
+# Feature Distributions Across Sites
+
+<img src="/images/eda_feature_distributions.png" class="h-100 mx-auto" />
+
+<!--
+Climate differences are striking: Singapore temperature spans only 5°C while Qingdao spans over 45°C. Precipitation is extremely right-skewed — near-zero most of the time. These distributions justify using a nonlinear model and highlight the diversity of our study sites.
+-->
+
+---
+layout: two-cols
+---
+
+# Feature Correlations
+
+<img src="/images/eda_correlation_matrix.png" class="h-90" />
+
+::right::
+
+<br>
+<br>
+
+### Key Observations
+
+<v-clicks>
+
+- **t2m ↔ Heat Index**: r = 0.98-1.00 — temperature is the dominant driver
+- **Wind10 ↔ Wind100**: r = 0.89-0.96 — redundant but model handles it
+- **Solar ↔ Thermal radiation**: negatively correlated in tropics
+- Singapore: overall **weaker** inter-feature correlations (narrow temp range)
+
+</v-clicks>
+
+<br>
+
+<v-click>
+
+> Correlation structure varies by climate zone — **one model must adapt** to different regimes
+
+</v-click>
+
+<!--
+The correlation matrices reveal that feature relationships are climate-dependent. For example, radiation variables are strongly correlated in Qingdao but less so in Singapore. This means the model must learn different feature interactions for each site.
+-->
+
+---
+
+# Target Variable Distributions
+
+<img src="/images/eda_target_distributions.png" class="h-80 mx-auto" />
+
+<v-click>
+
+**Non-Gaussian targets**: Qingdao/Miami are bimodal (winter-summer split), Singapore WBGT is extremely concentrated at 25-28°C. Despite this, our Gaussian output works well because the **conditional distribution** $P(y|x_{1:72})$ is unimodal — the bimodality comes from mixing summer/winter samples.
+
+</v-click>
+
+<!--
+This is an important finding: the marginal distributions are clearly non-Gaussian with bimodal shapes, but the model predicts conditional distributions given 72h of context. Conditioning removes the seasonal mixing, making the Gaussian assumption empirically valid — confirmed by our PIT and calibration analyses.
+-->
+
+---
+layout: two-cols
+---
+
+# Temporal Patterns
+
+### Diurnal Cycles
+
+<img src="/images/eda_diurnal_cycle.png" class="h-70" />
+
+::right::
+
+<br>
+
+### Autocorrelation Analysis
+
+<img src="/images/eda_autocorrelation.png" class="h-70" />
+
+<v-click>
+
+**72h lookback** captures 3 full diurnal cycles — autocorrelation still >0.3 at this lag
+
+</v-click>
+
+<!--
+Left: Clear 24-hour periodicity in all variables. Dubai has the strongest diurnal temperature swing. Right: The autocorrelation analysis validates our 72-hour lookback window. The dashed line at 72h shows correlation is still meaningful, capturing 3 complete day-night cycles. Singapore decays fastest because its day-to-day variation is minimal.
+-->
+
+---
+
+# EDA Summary
+
+<div class="grid grid-cols-2 gap-8">
+<div>
+
+### Data Quality ✓
+
+- **No missing values** except Dubai SST (land grid point, handled via skin temperature fallback)
+- ~140K hourly samples per site (16 years)
+- Stationary after deseasonalization — no long-term drift
+
+</div>
+<div>
+
+### Design Implications
+
+<v-clicks>
+
+- **Nonlinear model needed**: temperature vs Heat Index is exponential at high-T
+- **72h lookback justified**: autocorrelation validates the window choice
+- **Gaussian conditional output works**: despite non-Gaussian marginals
+- **Climate diversity validated**: 4 sites span extreme ranges in all features
+
+</v-clicks>
+
+</div>
+</div>
+
+<br>
+
+<v-click>
+
+> EDA confirms our architectural and hyperparameter choices are **data-driven, not arbitrary**
+
+</v-click>
+
+<!--
+This EDA validates key design decisions: the lookback window, the Gaussian output assumption, the choice of nonlinear GRU, and the selection of diverse study sites. These are not arbitrary choices but data-informed decisions.
+-->
+
+---
 
 # Model Architecture
 
