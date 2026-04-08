@@ -365,7 +365,333 @@ def _plot_ablation_skill(variant_data: dict, output_dir: Path) -> None:
     print(f"Saved: {out}")
 
 
-# ── 4. Seasonal Performance Analysis ───────────────────────────────────────
+# ── 3b. Probabilistic vs Deterministic Comparison ─────────────────────────
+
+
+def plot_prob_vs_det(results_dir: Path, output_dir: Path) -> None:
+    """Focused comparison between probabilistic (full) and deterministic models on Qingdao."""
+
+    prob_data = load_eval_json(results_dir / "eval_full_qingdao.json")
+    det_data = load_eval_json(results_dir / "eval_deterministic_qingdao.json")
+    if not prob_data or not det_data:
+        print("Missing probabilistic or deterministic eval data for Qingdao.")
+        return
+
+    targets = ["heat_index_c", "wbgt_like_c"]
+    model_labels = ["Probabilistic", "Deterministic"]
+    model_colors = [PALETTE[1], PALETTE[0]]  # teal vs red
+
+    # ── Figure 1: Overall metrics side-by-side ──
+    metrics = ["rmse", "mae", "crps", "winkler_90", "gaussian_nll"]
+    metric_labels = ["RMSE (°C)", "MAE (°C)", "CRPS", "Winkler@90%", "Gaussian NLL"]
+
+    fig, axes = plt.subplots(2, len(metrics), figsize=(20, 8))
+    fig.suptitle("Probabilistic vs Deterministic — Qingdao", fontsize=14, fontweight="bold")
+
+    for row, target in enumerate(targets):
+        for col, (mk, ml) in enumerate(zip(metrics, metric_labels)):
+            ax = axes[row, col]
+            vals = [
+                prob_data.get(target, {}).get(mk, 0),
+                det_data.get(target, {}).get(mk, 0),
+            ]
+            bars = ax.bar([0, 1], vals, width=0.5, color=model_colors, alpha=0.85, edgecolor="white")
+            for bar, val in zip(bars, vals):
+                ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                        f"{val:.3f}", ha="center", va="bottom", fontsize=8)
+            ax.set_xticks([0, 1])
+            ax.set_xticklabels(model_labels, fontsize=9)
+            if row == 0:
+                ax.set_title(ml)
+            if col == 0:
+                ax.set_ylabel(TARGET_DISPLAY[target])
+
+    plt.tight_layout()
+    out = output_dir / "prob_vs_det_overall.png"
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+    # ── Figure 2: Horizon-wise RMSE & CRPS curves ──
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle("Probabilistic vs Deterministic — Per-Horizon Comparison", fontsize=14, fontweight="bold")
+
+    for row, target in enumerate(targets):
+        prob_horizon = prob_data.get("horizon_metrics", {}).get(target, [])
+        det_horizon = det_data.get("horizon_metrics", {}).get(target, [])
+        if not prob_horizon or not det_horizon:
+            continue
+
+        hours_p = [h["horizon_hour"] for h in prob_horizon]
+        hours_d = [h["horizon_hour"] for h in det_horizon]
+
+        # RMSE by horizon
+        ax = axes[row, 0]
+        ax.plot(hours_p, [h["rmse"] for h in prob_horizon],
+                "o-", color=model_colors[0], linewidth=2, markersize=4, label="Probabilistic")
+        ax.plot(hours_d, [h["rmse"] for h in det_horizon],
+                "s--", color=model_colors[1], linewidth=2, markersize=4, label="Deterministic")
+        ax.set_xlabel("Forecast Horizon (hours)")
+        ax.set_ylabel("RMSE (°C)")
+        ax.set_title(f"{TARGET_DISPLAY[target]} — RMSE")
+        ax.legend()
+
+        # CRPS by horizon
+        ax = axes[row, 1]
+        ax.plot(hours_p, [h["crps"] for h in prob_horizon],
+                "o-", color=model_colors[0], linewidth=2, markersize=4, label="Probabilistic")
+        ax.plot(hours_d, [h["crps"] for h in det_horizon],
+                "s--", color=model_colors[1], linewidth=2, markersize=4, label="Deterministic")
+        ax.set_xlabel("Forecast Horizon (hours)")
+        ax.set_ylabel("CRPS")
+        ax.set_title(f"{TARGET_DISPLAY[target]} — CRPS")
+        ax.legend()
+
+    plt.tight_layout()
+    out = output_dir / "prob_vs_det_horizon.png"
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+    # ── Figure 3: Uncertainty quality — predictive std & coverage ──
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle("Uncertainty Quality — Probabilistic vs Deterministic", fontsize=14, fontweight="bold")
+
+    for tidx, target in enumerate(targets):
+        ax = axes[tidx]
+        prob_h = prob_data.get("horizon_metrics", {}).get(target, [])
+        det_h = det_data.get("horizon_metrics", {}).get(target, [])
+        if not prob_h or not det_h:
+            continue
+
+        hours = [h["horizon_hour"] for h in prob_h]
+
+        # Predictive std
+        ax.plot(hours, [h["avg_predictive_std"] for h in prob_h],
+                "o-", color=model_colors[0], linewidth=2, markersize=4, label="Prob. Pred Std")
+        ax.plot(hours, [h["avg_predictive_std"] for h in det_h],
+                "s--", color=model_colors[1], linewidth=2, markersize=4, label="Det. Pred Std")
+
+        # Actual RMSE as reference
+        ax.plot(hours, [h["rmse"] for h in prob_h],
+                "^:", color=PALETTE[4], linewidth=1.5, markersize=3, label="Actual RMSE")
+
+        ax.set_xlabel("Forecast Horizon (hours)")
+        ax.set_ylabel("Std / Error (°C)")
+        ax.set_title(f"{TARGET_DISPLAY[target]}")
+        ax.legend(fontsize=8)
+
+    plt.tight_layout()
+    out = output_dir / "prob_vs_det_uncertainty.png"
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+
+# ── 4. Architecture Comparison (GRU vs LSTM vs Transformer) ───────────────
+
+
+ARCH_CONFIGS = {
+    "GRU": "eval_full_qingdao.json",
+    "LSTM": "eval_lstm_qingdao.json",
+    "Transformer": "eval_transformer_qingdao.json",
+}
+ARCH_COLORS = [PALETTE[1], PALETTE[0], PALETTE[4]]  # teal, red, violet
+ARCH_MARKERS = ["o", "s", "^"]
+ARCH_LINESTYLES = ["-", "--", "-."]
+
+
+def plot_architecture_comparison(results_dir: Path, output_dir: Path) -> None:
+    """Generate comparison figures for GRU vs LSTM vs Transformer on Qingdao."""
+
+    arch_data: dict[str, dict] = {}
+    for label, fname in ARCH_CONFIGS.items():
+        data = load_eval_json(results_dir / fname)
+        if data:
+            arch_data[label] = data
+    if len(arch_data) < 2:
+        print("Need at least 2 architecture eval files for comparison. Skipping.")
+        return
+
+    targets = ["heat_index_c", "wbgt_like_c"]
+    arch_labels = list(arch_data.keys())
+
+    # ── Figure 1: Overall metrics grouped bar chart ──
+    metrics = ["rmse", "mae", "crps", "winkler_90", "coverage_90"]
+    metric_labels = ["RMSE (°C)", "MAE (°C)", "CRPS", "Winkler@90%", "Coverage@90%"]
+
+    fig, axes = plt.subplots(2, len(metrics), figsize=(22, 8))
+    fig.suptitle("Encoder Architecture Comparison — Qingdao", fontsize=14, fontweight="bold")
+
+    bar_width = 0.25
+    for row, target in enumerate(targets):
+        for col, (mk, ml) in enumerate(zip(metrics, metric_labels)):
+            ax = axes[row, col]
+            for i, label in enumerate(arch_labels):
+                val = arch_data[label].get(target, {}).get(mk, 0)
+                bar = ax.bar(i * bar_width, val, width=bar_width, color=ARCH_COLORS[i],
+                             alpha=0.85, edgecolor="white", label=label if row == 0 and col == 0 else "")
+                ax.text(i * bar_width, val, f"{val:.3f}", ha="center", va="bottom", fontsize=7)
+            ax.set_xticks([i * bar_width for i in range(len(arch_labels))])
+            ax.set_xticklabels(arch_labels, fontsize=9)
+            if row == 0:
+                ax.set_title(ml)
+            if col == 0:
+                ax.set_ylabel(TARGET_DISPLAY[target])
+            if mk == "coverage_90":
+                ax.axhline(0.9, color="gray", linestyle=":", linewidth=1, alpha=0.7)
+
+    axes[0, 0].legend(loc="upper left", fontsize=8)
+    plt.tight_layout()
+    out = output_dir / "arch_comparison_overall.png"
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+    # ── Figure 2: Per-horizon RMSE and CRPS ──
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle("Per-Horizon Comparison — GRU vs LSTM vs Transformer", fontsize=14, fontweight="bold")
+
+    for row, target in enumerate(targets):
+        for col, (mk, ml) in enumerate([("rmse", "RMSE (°C)"), ("crps", "CRPS")]):
+            ax = axes[row, col]
+            for i, label in enumerate(arch_labels):
+                horizon = arch_data[label].get("horizon_metrics", {}).get(target, [])
+                if not horizon:
+                    continue
+                hours = [h["horizon_hour"] for h in horizon]
+                values = [h[mk] for h in horizon]
+                ax.plot(hours, values, marker=ARCH_MARKERS[i], linestyle=ARCH_LINESTYLES[i],
+                        color=ARCH_COLORS[i], linewidth=2, markersize=4, label=label)
+            ax.set_xlabel("Forecast Horizon (hours)")
+            ax.set_ylabel(ml)
+            ax.set_title(f"{TARGET_DISPLAY[target]} — {ml.split(' ')[0]}")
+            ax.legend()
+
+    plt.tight_layout()
+    out = output_dir / "arch_comparison_horizon.png"
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+    # ── Figure 3: Uncertainty decomposition per horizon ──
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig.suptitle("Uncertainty Decomposition — GRU vs LSTM vs Transformer", fontsize=14, fontweight="bold")
+
+    for row, target in enumerate(targets):
+        # Aleatoric std
+        ax = axes[row, 0]
+        for i, label in enumerate(arch_labels):
+            horizon = arch_data[label].get("horizon_metrics", {}).get(target, [])
+            if not horizon:
+                continue
+            hours = [h["horizon_hour"] for h in horizon]
+            ax.plot(hours, [h["avg_aleatoric_std"] for h in horizon],
+                    marker=ARCH_MARKERS[i], linestyle=ARCH_LINESTYLES[i],
+                    color=ARCH_COLORS[i], linewidth=2, markersize=4, label=label)
+        ax.set_xlabel("Forecast Horizon (hours)")
+        ax.set_ylabel("Aleatoric Std (°C)")
+        ax.set_title(f"{TARGET_DISPLAY[target]} — Aleatoric Uncertainty")
+        ax.legend()
+
+        # Epistemic std
+        ax = axes[row, 1]
+        for i, label in enumerate(arch_labels):
+            horizon = arch_data[label].get("horizon_metrics", {}).get(target, [])
+            if not horizon:
+                continue
+            hours = [h["horizon_hour"] for h in horizon]
+            ax.plot(hours, [h["avg_epistemic_std"] for h in horizon],
+                    marker=ARCH_MARKERS[i], linestyle=ARCH_LINESTYLES[i],
+                    color=ARCH_COLORS[i], linewidth=2, markersize=4, label=label)
+        ax.set_xlabel("Forecast Horizon (hours)")
+        ax.set_ylabel("Epistemic Std (°C)")
+        ax.set_title(f"{TARGET_DISPLAY[target]} — Epistemic Uncertainty")
+        ax.legend()
+
+    plt.tight_layout()
+    out = output_dir / "arch_comparison_uncertainty.png"
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+    # ── Figure 4: Skill score comparison ──
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle("Persistence Skill Score — GRU vs LSTM vs Transformer", fontsize=14, fontweight="bold")
+
+    for tidx, target in enumerate(targets):
+        ax = axes[tidx]
+        for i, label in enumerate(arch_labels):
+            horizon = arch_data[label].get("horizon_metrics", {}).get(target, [])
+            if not horizon:
+                continue
+            hours = [h["horizon_hour"] for h in horizon]
+            # Compute per-horizon skill from RMSE vs persistence
+            persist_rmse = arch_data[label]["persistence_skill"][target]["persistence_rmse"]
+            skills = [1.0 - (h["rmse"] ** 2) / (persist_rmse ** 2) for h in horizon]
+            ax.plot(hours, skills, marker=ARCH_MARKERS[i], linestyle=ARCH_LINESTYLES[i],
+                    color=ARCH_COLORS[i], linewidth=2, markersize=4, label=label)
+        ax.axhline(0, color="gray", linestyle=":", linewidth=1, alpha=0.5)
+        ax.set_xlabel("Forecast Horizon (hours)")
+        ax.set_ylabel("Skill Score")
+        ax.set_title(TARGET_DISPLAY[target])
+        ax.legend()
+        ax.set_ylim(-0.1, 1.0)
+
+    plt.tight_layout()
+    out = output_dir / "arch_comparison_skill.png"
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+    # ── Figure 5: Radar chart ──
+    overall_metrics = ["rmse", "mae", "crps", "coverage_90", "gaussian_nll"]
+    radar_labels = ["RMSE", "MAE", "CRPS", "Cov@90%", "NLL"]
+    n_metrics = len(overall_metrics)
+    angles = np.linspace(0, 2 * np.pi, n_metrics, endpoint=False).tolist()
+    angles.append(angles[0])
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5), subplot_kw={"polar": True})
+    fig.suptitle("Architecture Radar — Qingdao", fontsize=14, fontweight="bold")
+
+    for tidx, target in enumerate(targets):
+        ax = axes[tidx]
+        # Collect raw values and normalize (lower is better except coverage)
+        raw_vals = {label: [arch_data[label][target].get(m, 0) for m in overall_metrics]
+                    for label in arch_labels}
+        # Normalize each metric to [0, 1] range across architectures
+        for m_idx in range(n_metrics):
+            col_vals = [raw_vals[l][m_idx] for l in arch_labels]
+            mn, mx = min(col_vals), max(col_vals)
+            rng = mx - mn if mx != mn else 1.0
+            for l in arch_labels:
+                if overall_metrics[m_idx] == "coverage_90":
+                    # Closer to 0.9 is better
+                    raw_vals[l][m_idx] = 1.0 - abs(raw_vals[l][m_idx] - 0.9) / max(rng, 0.05)
+                else:
+                    # Lower is better -> invert
+                    raw_vals[l][m_idx] = 1.0 - (raw_vals[l][m_idx] - mn) / rng
+
+        for i, label in enumerate(arch_labels):
+            vals = raw_vals[label] + [raw_vals[label][0]]
+            ax.plot(angles, vals, marker=ARCH_MARKERS[i], linestyle=ARCH_LINESTYLES[i],
+                    color=ARCH_COLORS[i], linewidth=2, markersize=5, label=label)
+            ax.fill(angles, vals, color=ARCH_COLORS[i], alpha=0.08)
+
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(radar_labels, fontsize=9)
+        ax.set_title(TARGET_DISPLAY[target], pad=20)
+        ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.1), fontsize=8)
+        ax.set_ylim(0, 1.1)
+
+    plt.tight_layout()
+    out = output_dir / "arch_comparison_radar.png"
+    fig.savefig(out)
+    plt.close(fig)
+    print(f"Saved: {out}")
+
+
+# ── 5. Seasonal Performance Analysis ─────────────────────────────────────
 
 
 def plot_seasonal_analysis(results_dir: Path, output_dir: Path) -> None:
@@ -710,6 +1036,8 @@ def main() -> None:
     plot_training_curves(results_dir, output_dir)
     plot_cross_site_comparison(results_dir, output_dir)
     plot_ablation_comparison(results_dir, output_dir)
+    plot_prob_vs_det(results_dir, output_dir)
+    plot_architecture_comparison(results_dir, output_dir)
     plot_uncertainty_summary(results_dir, output_dir)
 
     if not args.skip_seasonal:
