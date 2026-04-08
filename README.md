@@ -6,6 +6,34 @@
 
 # 多站点滨海城市复合热应激概率预测与不确定性量化
 
+## 目录
+
+- [项目简介](#项目简介)
+- [研究动机](#研究动机)
+- [数据集](#数据集)
+- [模型架构](#模型架构)
+- [训练配置](#训练配置)
+- [评估指标](#评估指标)
+- [实验结果](#实验结果)
+  - [多站点全模型对比](#多站点全模型对比)
+  - [编码器架构对比](#编码器架构对比青岛站点)
+  - [消融实验](#消融实验gru青岛站点)
+  - [关键发现](#关键发现)
+- [探索性数据分析 (EDA)](#探索性数据分析-eda)
+- [可视化分析](#可视化分析)
+  - [1. 训练过程](#1-训练过程)
+  - [2. 跨站点性能对比](#2-跨站点性能对比)
+  - [3. 编码器架构对比](#3-编码器架构对比gru-vs-lstm-vs-transformer)
+  - [4. 消融实验对比](#4-消融实验对比)
+  - [5. 不确定性分析](#5-不确定性分析)
+  - [6. 预测诊断](#6-预测诊断)
+  - [7. 季节性分析](#7-季节性分析)
+  - [8. 特征重要性](#8-特征重要性)
+- [使用方法](#使用方法)
+- [项目结构](#项目结构)
+- [依赖](#依赖)
+- [局限性](#局限性)
+
 ## 项目简介
 
 本项目基于 ERA5 单点逐小时再分析数据，构建了一个 **概率时序预测模型**，用于预测未来 24 小时热应激水平，并量化预测中的不确定性。
@@ -578,6 +606,30 @@ python visualize.py --skip-seasonal --skip-importance
 <a id="english"></a>
 
 # Multi-Site Coastal Heat-Stress Probabilistic Forecasting with Uncertainty Quantification
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Model Architecture](#model-architecture)
+- [Evaluation Metrics](#evaluation-metrics)
+- [Results](#results)
+  - [Cross-Site Performance](#cross-site-performance-full-model)
+  - [Encoder Architecture Comparison](#encoder-architecture-comparison-qingdao)
+  - [Ablation Study](#ablation-study-gru-qingdao)
+  - [Key Findings](#key-findings)
+- [Exploratory Data Analysis (EDA)](#exploratory-data-analysis-eda)
+- [Visual Analysis](#visual-analysis)
+  - [1. Training Process](#1-training-process)
+  - [2. Cross-Site Performance](#2-cross-site-performance)
+  - [3. Encoder Architecture Comparison](#3-encoder-architecture-comparison-gru-vs-lstm-vs-transformer)
+  - [4. Ablation Study](#4-ablation-study)
+  - [5. Uncertainty Analysis](#5-uncertainty-analysis)
+  - [6. Forecast Diagnostics](#6-forecast-diagnostics)
+  - [7. Seasonal Analysis](#7-seasonal-analysis)
+  - [8. Feature Importance](#8-feature-importance)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [Limitations](#limitations)
 
 ## Overview
 
