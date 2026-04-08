@@ -82,6 +82,7 @@ class TrainConfig:
     num_attention_heads: int = 4
     horizon_weight_ratio: float = 2.0
     model_type: str = "gru"  # "gru", "lstm", or "transformer"
+    warmup_epochs: int = 0  # linear warmup epochs (optional, e.g. 5 for transformer)
 
 
 def set_seed(seed: int) -> None:
@@ -1048,6 +1049,8 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--horizon-weight-ratio", type=float, default=TrainConfig.horizon_weight_ratio)
     parser.add_argument("--model-type", default=TrainConfig.model_type, choices=["gru", "lstm", "transformer"],
                         help="Encoder architecture: gru, lstm, or transformer")
+    parser.add_argument("--warmup-epochs", type=int, default=TrainConfig.warmup_epochs,
+                        help="Linear warmup epochs (default: 5, used for transformer)")
     args = parser.parse_args()
     return TrainConfig(**{k.replace("-", "_"): v for k, v in vars(args).items()})
 
@@ -1104,7 +1107,20 @@ def main() -> None:
 
     model = build_model(config, len(feature_names)).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=config.epochs, eta_min=1e-6)
+
+    warmup_epochs = config.warmup_epochs
+    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=config.epochs - warmup_epochs, eta_min=1e-6
+    )
+    if warmup_epochs > 0:
+        warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer, start_factor=1e-2, end_factor=1.0, total_iters=warmup_epochs
+        )
+        scheduler = torch.optim.lr_scheduler.SequentialLR(
+            optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_epochs]
+        )
+    else:
+        scheduler = cosine_scheduler
 
     best_val = float("inf")
     best_state = None
