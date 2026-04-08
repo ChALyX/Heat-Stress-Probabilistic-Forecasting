@@ -81,6 +81,7 @@ class TrainConfig:
     deterministic: bool = False
     num_attention_heads: int = 4
     horizon_weight_ratio: float = 2.0
+    model_type: str = "gru"  # "gru", "lstm", or "transformer"
 
 
 def set_seed(seed: int) -> None:
@@ -460,6 +461,239 @@ class ProbabilisticGRU(nn.Module):
         return mean, logvar
 
 
+class ProbabilisticLSTM(nn.Module):
+    """LSTM encoder with optional multi-head attention, residual decoder, horizon embedding, and Gaussian heads."""
+
+    def __init__(
+        self,
+        input_size: int,
+        target_size: int,
+        horizon: int,
+        hidden_size: int,
+        num_layers: int,
+        dropout: float,
+        feature_proj_size: int = 64,
+        decoder_hidden_size: int = 128,
+        use_attention: bool = True,
+        use_horizon_embed: bool = True,
+        deterministic: bool = False,
+        num_attention_heads: int = 4,
+    ) -> None:
+        super().__init__()
+        lstm_dropout = dropout if num_layers > 1 else 0.0
+        self.target_size = target_size
+        self.horizon = horizon
+        self.use_attention = use_attention
+        self.use_horizon_embed = use_horizon_embed
+        self.deterministic = deterministic
+
+        self.feature_proj = nn.Sequential(
+            nn.Linear(input_size, feature_proj_size),
+            nn.LayerNorm(feature_proj_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+        self.encoder = nn.LSTM(
+            input_size=feature_proj_size,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=lstm_dropout,
+        )
+
+        context_size = hidden_size * 2 if use_attention else hidden_size
+        if use_attention:
+            self.multihead_attention = nn.MultiheadAttention(
+                embed_dim=hidden_size,
+                num_heads=num_attention_heads,
+                dropout=dropout,
+                batch_first=True,
+            )
+        self.context_norm = nn.LayerNorm(context_size)
+
+        decoder_in = context_size + (hidden_size if use_horizon_embed else 0)
+        if use_horizon_embed:
+            self.horizon_embedding = nn.Embedding(horizon, hidden_size)
+
+        self.decoder_proj = nn.Linear(decoder_in, decoder_hidden_size)
+        self.decoder_block1 = nn.Sequential(
+            nn.Linear(decoder_hidden_size, decoder_hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+        self.decoder_norm1 = nn.LayerNorm(decoder_hidden_size)
+        self.decoder_block2 = nn.Sequential(
+            nn.Linear(decoder_hidden_size, decoder_hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+        self.decoder_norm2 = nn.LayerNorm(decoder_hidden_size)
+
+        self.mean_head = nn.Linear(decoder_hidden_size, target_size)
+        if not deterministic:
+            self.logvar_head = nn.Linear(decoder_hidden_size, target_size)
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        projected = self.feature_proj(x)
+        encoder_outputs, (h_n, _c_n) = self.encoder(projected)
+        last_hidden = h_n[-1]
+
+        if self.use_attention:
+            query = last_hidden.unsqueeze(1)
+            context, _ = self.multihead_attention(query, encoder_outputs, encoder_outputs)
+            context = context.squeeze(1)
+            summary = self.context_norm(torch.cat([last_hidden, context], dim=-1))
+        else:
+            summary = self.context_norm(last_hidden)
+
+        repeated_summary = summary.unsqueeze(1).expand(-1, self.horizon, -1)
+
+        if self.use_horizon_embed:
+            horizon_ids = torch.arange(self.horizon, device=x.device)
+            horizon_embed = self.horizon_embedding(horizon_ids).unsqueeze(0).expand(x.size(0), -1, -1)
+            decoder_input = torch.cat([repeated_summary, horizon_embed], dim=-1)
+        else:
+            decoder_input = repeated_summary
+
+        h = self.decoder_proj(decoder_input)
+        h = self.decoder_norm1(h + self.decoder_block1(h))
+        h = self.decoder_norm2(h + self.decoder_block2(h))
+
+        mean = self.mean_head(h)
+
+        if self.deterministic:
+            logvar = torch.zeros_like(mean)
+        else:
+            logvar = self.logvar_head(h)
+            logvar = torch.clamp(logvar, min=-8.0, max=6.0)
+        return mean, logvar
+
+
+class PositionalEncoding(nn.Module):
+    """Sinusoidal positional encoding for Transformer."""
+
+    def __init__(self, d_model: int, max_len: int = 512, dropout: float = 0.1) -> None:
+        super().__init__()
+        self.dropout = nn.Dropout(p=dropout)
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term[: d_model // 2]) if d_model % 2 else torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)  # [1, max_len, d_model]
+        self.register_buffer("pe", pe)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x + self.pe[:, : x.size(1)]
+        return self.dropout(x)
+
+
+class ProbabilisticTransformer(nn.Module):
+    """Transformer encoder with optional horizon embedding, residual decoder, and Gaussian heads."""
+
+    def __init__(
+        self,
+        input_size: int,
+        target_size: int,
+        horizon: int,
+        hidden_size: int,
+        num_layers: int,
+        dropout: float,
+        feature_proj_size: int = 64,
+        decoder_hidden_size: int = 128,
+        use_attention: bool = True,
+        use_horizon_embed: bool = True,
+        deterministic: bool = False,
+        num_attention_heads: int = 4,
+    ) -> None:
+        super().__init__()
+        self.target_size = target_size
+        self.horizon = horizon
+        self.use_horizon_embed = use_horizon_embed
+        self.deterministic = deterministic
+        self.hidden_size = hidden_size
+
+        self.feature_proj = nn.Sequential(
+            nn.Linear(input_size, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+        self.pos_encoding = PositionalEncoding(hidden_size, max_len=512, dropout=dropout)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_size,
+            nhead=num_attention_heads,
+            dim_feedforward=hidden_size * 4,
+            dropout=dropout,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        # Use a learnable CLS token for sequence aggregation
+        self.cls_token = nn.Parameter(torch.randn(1, 1, hidden_size) * 0.02)
+        self.context_norm = nn.LayerNorm(hidden_size)
+
+        decoder_in = hidden_size + (hidden_size if use_horizon_embed else 0)
+        if use_horizon_embed:
+            self.horizon_embedding = nn.Embedding(horizon, hidden_size)
+
+        self.decoder_proj = nn.Linear(decoder_in, decoder_hidden_size)
+        self.decoder_block1 = nn.Sequential(
+            nn.Linear(decoder_hidden_size, decoder_hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+        self.decoder_norm1 = nn.LayerNorm(decoder_hidden_size)
+        self.decoder_block2 = nn.Sequential(
+            nn.Linear(decoder_hidden_size, decoder_hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+        self.decoder_norm2 = nn.LayerNorm(decoder_hidden_size)
+
+        self.mean_head = nn.Linear(decoder_hidden_size, target_size)
+        if not deterministic:
+            self.logvar_head = nn.Linear(decoder_hidden_size, target_size)
+
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        B = x.size(0)
+        projected = self.feature_proj(x)
+        projected = self.pos_encoding(projected)
+
+        # Prepend CLS token
+        cls_tokens = self.cls_token.expand(B, -1, -1)
+        encoder_input = torch.cat([cls_tokens, projected], dim=1)
+
+        encoded = self.transformer_encoder(encoder_input)
+        # Use CLS token output as sequence summary
+        summary = self.context_norm(encoded[:, 0, :])
+
+        repeated_summary = summary.unsqueeze(1).expand(-1, self.horizon, -1)
+
+        if self.use_horizon_embed:
+            horizon_ids = torch.arange(self.horizon, device=x.device)
+            horizon_embed = self.horizon_embedding(horizon_ids).unsqueeze(0).expand(B, -1, -1)
+            decoder_input = torch.cat([repeated_summary, horizon_embed], dim=-1)
+        else:
+            decoder_input = repeated_summary
+
+        h = self.decoder_proj(decoder_input)
+        h = self.decoder_norm1(h + self.decoder_block1(h))
+        h = self.decoder_norm2(h + self.decoder_block2(h))
+
+        mean = self.mean_head(h)
+
+        if self.deterministic:
+            logvar = torch.zeros_like(mean)
+        else:
+            logvar = self.logvar_head(h)
+            logvar = torch.clamp(logvar, min=-8.0, max=6.0)
+        return mean, logvar
+
+
 def gaussian_nll(mean: torch.Tensor, logvar: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     """Negative log-likelihood of a diagonal Gaussian."""
 
@@ -769,9 +1003,10 @@ def save_checkpoint(
 def model_variant_label(config: TrainConfig) -> str:
     """Return a human-readable label for the model variant being trained."""
 
+    model_name = config.model_type.upper()
     if config.deterministic:
-        return "Deterministic GRU"
-    parts = ["Probabilistic GRU"]
+        return f"Deterministic {model_name}"
+    parts = [f"Probabilistic {model_name}"]
     if config.no_attention:
         parts.append("w/o Attention")
     if config.no_horizon_embed:
@@ -811,27 +1046,39 @@ def parse_args() -> TrainConfig:
     parser.add_argument("--deterministic", action="store_true", help="Train deterministic baseline (MSE only)")
     parser.add_argument("--num-attention-heads", type=int, default=TrainConfig.num_attention_heads)
     parser.add_argument("--horizon-weight-ratio", type=float, default=TrainConfig.horizon_weight_ratio)
+    parser.add_argument("--model-type", default=TrainConfig.model_type, choices=["gru", "lstm", "transformer"],
+                        help="Encoder architecture: gru, lstm, or transformer")
     args = parser.parse_args()
     return TrainConfig(**{k.replace("-", "_"): v for k, v in vars(args).items()})
 
 
-def build_model(config: TrainConfig, input_size: int) -> ProbabilisticGRU:
-    """Build a model from config, respecting ablation flags."""
+MODEL_CLASSES = {
+    "gru": ProbabilisticGRU,
+    "lstm": ProbabilisticLSTM,
+    "transformer": ProbabilisticTransformer,
+}
 
-    return ProbabilisticGRU(
+
+def build_model(config: TrainConfig, input_size: int) -> nn.Module:
+    """Build a model from config, respecting ablation flags and model type."""
+
+    model_cls = MODEL_CLASSES[config.model_type]
+    kwargs = dict(
         input_size=input_size,
         target_size=len(TARGET_NAMES),
         horizon=config.horizon,
         hidden_size=config.hidden_size,
         num_layers=config.num_layers,
         dropout=config.dropout,
-        feature_proj_size=config.feature_proj_size,
         decoder_hidden_size=config.decoder_hidden_size,
         use_attention=not config.no_attention,
         use_horizon_embed=not config.no_horizon_embed,
         deterministic=config.deterministic,
         num_attention_heads=config.num_attention_heads,
     )
+    if config.model_type != "transformer":
+        kwargs["feature_proj_size"] = config.feature_proj_size
+    return model_cls(**kwargs)
 
 
 def main() -> None:

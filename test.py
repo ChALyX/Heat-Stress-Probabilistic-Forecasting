@@ -41,6 +41,8 @@ from train import (
     EPS,
     TARGET_NAMES,
     ProbabilisticGRU,
+    ProbabilisticLSTM,
+    ProbabilisticTransformer,
     TrainConfig,
     build_feature_target_arrays,
     build_model,

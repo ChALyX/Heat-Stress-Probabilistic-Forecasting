@@ -50,22 +50,31 @@ data/era5_miami.csv
 
 ## 模型架构
 
-核心模型为 **Probabilistic GRU**（`train.py` 中的 `ProbabilisticGRU` 类），共约 **328,000 个可训练参数**。
+项目支持三种编码器架构，通过 `--model-type` 参数切换：
+
+| 模型 | 类名 | 参数量 | 编码器 |
+|------|------|--------|--------|
+| **GRU** (默认) | `ProbabilisticGRU` | ~328K | 2 层 GRU (hidden_size=128) |
+| **LSTM** | `ProbabilisticLSTM` | ~386K | 2 层 LSTM (hidden_size=128) |
+| **Transformer** | `ProbabilisticTransformer` | ~470K | 2 层 TransformerEncoder + CLS token + 正弦位置编码 |
 
 ![模型架构图](results/arc-white.png)
 
-### 关键设计
+### 共享设计
 
-1. **Feature Projection**：`Linear(24→64) + LayerNorm + GELU + Dropout`，将原始特征映射到紧凑表示
-2. **GRU Encoder**：2 层双向 GRU（hidden_size=128），捕捉热量积累、湿度滞后等时间依赖
-3. **Multi-Head Attention**（4 头）：学习历史窗口中哪些时刻对预测更重要，替代了简单的单头注意力
+三种架构共享相同的解码器和输出头：
+
+1. **Feature Projection**：`Linear(24→64) + LayerNorm + GELU + Dropout`（Transformer 直接投影到 hidden_size）
+2. **编码器**：GRU / LSTM / Transformer（见上表）
+3. **Multi-Head Attention**（4 头，GRU/LSTM 可选）：学习历史窗口中哪些时刻对预测更重要
 4. **Horizon-aware Decoder**：可学习的 horizon embedding 让模型区分近期与远期预测
 5. **Residual Decoder**：两个残差 MLP block（带 LayerNorm），改善梯度流和训练稳定性
 6. **概率输出头**：每个未来时刻、每个目标输出 `mean` 和 `log-variance`，即 `y_t ~ N(mean_t, var_t)`
 
 ### Ablation 变体
 
-通过命令行标志可以禁用各组件进行消融实验：
+通过命令行标志可以禁用各组件或切换架构：
+- `--model-type {gru,lstm,transformer}`：选择编码器架构
 - `--no-attention`：禁用多头注意力
 - `--no-horizon-embed`：禁用 horizon embedding
 - `--deterministic`：训练确定性基线（仅 MSE，不输出方差）
@@ -121,7 +130,23 @@ L = weighted_NLL + 0.1 * MSE + 1e-4 * variance_penalty
 | Singapore | 1.188 | 0.649 | 0.554 | 0.389 | 0.214 | 0.549 |
 | Miami | 1.465 | 0.755 | 0.742 | 1.009 | 0.465 | 0.626 |
 
-### 消融实验（青岛站点）
+### 编码器架构对比（青岛站点）
+
+| 架构 | HI RMSE | HI CRPS | HI Cov@90% | HI Skill | WB RMSE | WB CRPS | WB Cov@90% | WB Skill |
+|------|---------|---------|------------|----------|---------|---------|------------|----------|
+| **GRU** | **1.831** | **0.960** | 0.905 | **0.625** | **1.415** | **0.732** | 0.906 | **0.562** |
+| LSTM | 1.902 | 1.003 | 0.901 | 0.595 | 1.471 | 0.768 | 0.897 | 0.526 |
+| Transformer | 2.001 | 1.074 | 0.937 | 0.552 | 1.516 | 0.800 | 0.948 | 0.497 |
+
+不确定性分解：
+
+| 架构 | HI Aleatoric Std | HI Epistemic Std | WB Aleatoric Std | WB Epistemic Std |
+|------|-----------------|-----------------|-----------------|-----------------|
+| **GRU** | **1.612** | **0.540** | **1.238** | **0.402** |
+| LSTM | 1.653 | 0.578 | 1.243 | 0.442 |
+| Transformer | 1.943 | 0.832 | 1.493 | 0.632 |
+
+### 消融实验（GRU，青岛站点）
 
 | 变体 | HI RMSE | HI CRPS | HI Cov@90% | WB RMSE | WB CRPS | WB Cov@90% |
 |------|---------|---------|------------|---------|---------|------------|
@@ -134,12 +159,14 @@ L = weighted_NLL + 0.1 * MSE + 1e-4 * variance_penalty
 
 ### 关键发现
 
-1. **Horizon embedding 是最关键的组件**：去掉后 HI RMSE 上升 37%，WB RMSE 上升 26%
-2. **多头注意力未带来显著提升**：w/o Attention 变体在所有指标上均略优于 Full Model（HI RMSE 1.798 vs 1.831, CRPS 0.937 vs 0.960），差异约 1-2%，处于随机噪声范围内。这说明对于基于单点时序的热应激预测任务，GRU 最后隐状态已编码了足够的时序信息，额外的注意力聚合未能提供有意义的增益，反而因引入约 33K 额外参数略微增加了过拟合风险。这一发现提示：**模型设计应优先投入在输出端的结构创新（如 horizon embedding）而非编码端的复杂化**
-3. **概率模型在 CRPS 上远优于确定性模型**：full model CRPS=0.960 vs deterministic CRPS=2.710
-4. **16 年数据显著提升了预测精度**：青岛 HI RMSE 从 2.011 降至 1.831（-9%）
-5. **模型在所有站点和 horizon 上均优于 persistence baseline**：Skill Score 0.55—0.82
-6. **校准接近理想**：90% coverage 在 0.90—0.92 之间，非常接近名义值
+1. **GRU 在所有指标上全面领先**：相比 LSTM（RMSE 高约 4%）和 Transformer（RMSE 高约 9%），GRU 在点预测（RMSE/MAE）、概率预测（NLL/CRPS/Winkler）和技能分数上均最优
+2. **Transformer 校准偏保守**：其 90% coverage 达 93.7%/94.8%（远超名义值），对应 predictive std 比 GRU 高 24-25%，说明预测区间过宽。epistemic 不确定性也最大（0.83/0.63 vs GRU 的 0.54/0.40），表明 72 步序列长度和 ~10 万训练样本对 Transformer 来说偏小
+3. **LSTM 与 GRU 差距有限**：各指标仅差 3-5%，但门控机制更简洁的 GRU 在该数据规模下略有优势
+4. **Horizon embedding 是最关键的组件**：去掉后 HI RMSE 上升 37%，WB RMSE 上升 26%
+5. **多头注意力未带来显著提升**：w/o Attention 变体与 Full Model 差异仅 1-2%。这说明在基于单点时序的任务中，GRU 最后隐状态已编码了足够的时序信息，**模型设计应优先投入在输出端的结构创新（如 horizon embedding）而非编码端的复杂化**
+6. **概率模型在 CRPS 上远优于确定性模型**：full model CRPS=0.960 vs deterministic CRPS=2.710
+7. **模型在所有站点和 horizon 上均优于 persistence baseline**：Skill Score 0.55—0.82
+8. **校准接近理想**：GRU 的 90% coverage 在 0.90—0.92 之间，非常接近名义值
 
 ---
 
@@ -408,11 +435,15 @@ python load_data.py --site qingdao     # 仅下载青岛
 ### 训练
 
 ```bash
-# 全模型（默认青岛）
+# 全模型（默认 GRU + 青岛）
 python train.py
 
 # 指定站点
 python train.py --data-path data/era5_dubai.csv --checkpoint-path checkpoints/full_dubai.pt --metrics-path results/full_dubai_train.json --site dubai
+
+# 不同编码器架构
+python train.py --model-type lstm --checkpoint-path checkpoints/lstm_qingdao.pt --metrics-path results/lstm_qingdao_train.json
+python train.py --model-type transformer --checkpoint-path checkpoints/transformer_qingdao.pt --metrics-path results/transformer_qingdao_train.json
 
 # Ablation 变体
 python train.py --no-attention --checkpoint-path checkpoints/noattn_qingdao.pt --metrics-path results/noattn_qingdao_train.json
@@ -454,7 +485,7 @@ python visualize.py --skip-seasonal --skip-importance
 
 ```text
 .
-├── train.py              # 模型定义、特征工程、训练循环
+├── train.py              # 模型定义（GRU/LSTM/Transformer）、特征工程、训练循环
 ├── test.py               # 评估脚本、指标计算、图表生成
 ├── visualize.py          # 跨实验综合可视化
 ├── eda.py                 # 探索性数据分析
@@ -466,11 +497,13 @@ python visualize.py --skip-seasonal --skip-importance
 │   ├── era5_singapore.csv
 │   └── era5_miami.csv
 ├── checkpoints/           # 训练好的模型权重
-│   ├── full_qingdao.pt
+│   ├── full_qingdao.pt          # GRU 全模型（4 站点）
 │   ├── full_dubai.pt
 │   ├── full_singapore.pt
 │   ├── full_miami.pt
-│   ├── noattn_qingdao.pt
+│   ├── lstm_qingdao.pt          # LSTM 对比实验
+│   ├── transformer_qingdao.pt   # Transformer 对比实验
+│   ├── noattn_qingdao.pt        # 消融变体
 │   ├── nohorizon_qingdao.pt
 │   └── deterministic_qingdao.pt
 └── results/               # 评估结果、图表、CSV
@@ -539,14 +572,22 @@ Uncertainty is decomposed into:
 
 Data: ERA5 single-level hourly time series (2010-01-01 to 2025-12-31, 16 years, ~140K samples per site).
 
-The **Probabilistic GRU** model (~328K parameters):
+Three encoder architectures are supported via the `--model-type` flag:
+
+| Model | Class | Parameters | Encoder |
+|-------|-------|-----------|---------|
+| **GRU** (default) | `ProbabilisticGRU` | ~328K | 2-layer GRU (hidden_size=128) |
+| **LSTM** | `ProbabilisticLSTM` | ~386K | 2-layer LSTM (hidden_size=128) |
+| **Transformer** | `ProbabilisticTransformer` | ~470K | 2-layer TransformerEncoder + CLS token + sinusoidal positional encoding |
 
 ![Model Architecture](results/arc-white.png)
 
-1. **Feature Projection**: Linear(24→64) + LayerNorm + GELU + Dropout
-2. **GRU Encoder**: 2-layer GRU (hidden_size=128) over 72-hour lookback
-3. **Multi-Head Attention**: 4-head cross-attention from last hidden state to encoder outputs (ablation: optional)
-4. **Horizon-Aware Decoder**: learnable horizon embeddings + 2 residual MLP blocks with LayerNorm (ablation: optional)
+All three architectures share the same decoder and output heads:
+
+1. **Feature Projection**: Linear(24→64) + LayerNorm + GELU + Dropout (Transformer projects directly to hidden_size)
+2. **Encoder**: GRU / LSTM / Transformer (see table above)
+3. **Multi-Head Attention** (4-head, optional for GRU/LSTM): learns temporal importance weighting over the lookback window
+4. **Horizon-Aware Decoder**: learnable horizon embeddings + 2 residual MLP blocks with LayerNorm
 5. **Probabilistic Heads**: separate mean and log-variance outputs per target
 
 ### Training
@@ -559,6 +600,7 @@ The **Probabilistic GRU** model (~328K parameters):
 
 ### Ablation Flags
 
+- `--model-type {gru,lstm,transformer}`: select encoder architecture
 - `--no-attention`: disable multi-head attention
 - `--no-horizon-embed`: disable horizon embedding
 - `--deterministic`: MSE-only baseline without variance output
@@ -586,7 +628,23 @@ The **Probabilistic GRU** model (~328K parameters):
 | Singapore | 1.188 | 0.649 | 0.554 | 0.389 | 0.214 | 0.549 |
 | Miami | 1.465 | 0.755 | 0.742 | 1.009 | 0.465 | 0.626 |
 
-### Ablation Study (Qingdao)
+### Encoder Architecture Comparison (Qingdao)
+
+| Architecture | HI RMSE | HI CRPS | HI Cov@90% | HI Skill | WB RMSE | WB CRPS | WB Cov@90% | WB Skill |
+|-------------|---------|---------|------------|----------|---------|---------|------------|----------|
+| **GRU** | **1.831** | **0.960** | 0.905 | **0.625** | **1.415** | **0.732** | 0.906 | **0.562** |
+| LSTM | 1.902 | 1.003 | 0.901 | 0.595 | 1.471 | 0.768 | 0.897 | 0.526 |
+| Transformer | 2.001 | 1.074 | 0.937 | 0.552 | 1.516 | 0.800 | 0.948 | 0.497 |
+
+Uncertainty decomposition:
+
+| Architecture | HI Aleatoric Std | HI Epistemic Std | WB Aleatoric Std | WB Epistemic Std |
+|-------------|-----------------|-----------------|-----------------|-----------------|
+| **GRU** | **1.612** | **0.540** | **1.238** | **0.402** |
+| LSTM | 1.653 | 0.578 | 1.243 | 0.442 |
+| Transformer | 1.943 | 0.832 | 1.493 | 0.632 |
+
+### Ablation Study (GRU, Qingdao)
 
 | Variant | HI RMSE | HI CRPS | HI Cov@90% | WB RMSE | WB CRPS | WB Cov@90% |
 |---------|---------|---------|------------|---------|---------|------------|
@@ -599,12 +657,14 @@ The **Probabilistic GRU** model (~328K parameters):
 
 ### Key Findings
 
-1. **Horizon embedding is the most impactful component**: removing it degrades HI RMSE by 37%, WB RMSE by 26%
-2. **Multi-head attention provides no significant benefit**: the w/o Attention variant slightly outperforms the Full Model on all metrics (HI RMSE 1.798 vs 1.831, CRPS 0.937 vs 0.960), with differences of ~1-2% within noise range. This suggests that for single-point time series forecasting, the GRU's last hidden state already encodes sufficient temporal information, and the additional 4-head attention aggregation (~33K extra parameters) introduces slight overfitting. This finding indicates that **model design should prioritize output-side structural innovations (horizon embedding) over encoder-side complexity**
-3. **Probabilistic model vastly outperforms deterministic on CRPS**: 0.960 vs 2.710
-4. **16-year data significantly improves accuracy**: Qingdao HI RMSE improved from 2.011 to 1.831 (-9%)
-5. **Model consistently outperforms persistence baseline**: Skill Scores 0.55-0.82 across sites
-6. **Well-calibrated uncertainty**: 90% coverage ranges 0.90-0.92, very close to the nominal level
+1. **GRU outperforms all architectures across all metrics**: compared to LSTM (~4% higher RMSE) and Transformer (~9% higher RMSE), GRU achieves the best point forecast (RMSE/MAE), probabilistic forecast (NLL/CRPS/Winkler), and skill scores
+2. **Transformer is over-conservative**: its 90% coverage reaches 93.7%/94.8% (well above nominal), with predictive std 24-25% larger than GRU, indicating overly wide prediction intervals. Its epistemic uncertainty is also the highest (0.83/0.63 vs GRU's 0.54/0.40), suggesting that 72-step sequences and ~100K training samples are insufficient for the Transformer to learn effectively
+3. **LSTM is close to GRU**: only 3-5% gap across metrics, but GRU's simpler gating mechanism has a slight edge at this data scale
+4. **Horizon embedding is the most impactful component**: removing it degrades HI RMSE by 37%, WB RMSE by 26%
+5. **Multi-head attention provides no significant benefit**: the w/o Attention variant differs by only 1-2% from the Full Model, suggesting that **model design should prioritize output-side innovations (horizon embedding) over encoder-side complexity**
+6. **Probabilistic model vastly outperforms deterministic on CRPS**: 0.960 vs 2.710
+7. **Model consistently outperforms persistence baseline**: Skill Scores 0.55-0.82 across sites
+8. **Well-calibrated uncertainty**: GRU's 90% coverage ranges 0.90-0.92, very close to the nominal level
 
 ---
 
@@ -860,11 +920,15 @@ python load_data.py --site qingdao     # single site
 ### Train
 
 ```bash
-# Full model (default: Qingdao)
+# Full model (default: GRU + Qingdao)
 python train.py
 
 # Specific site
 python train.py --data-path data/era5_dubai.csv --checkpoint-path checkpoints/full_dubai.pt --metrics-path results/full_dubai_train.json --site dubai
+
+# Different encoder architectures
+python train.py --model-type lstm --checkpoint-path checkpoints/lstm_qingdao.pt --metrics-path results/lstm_qingdao_train.json
+python train.py --model-type transformer --checkpoint-path checkpoints/transformer_qingdao.pt --metrics-path results/transformer_qingdao_train.json
 
 # Ablation variants
 python train.py --no-attention --checkpoint-path checkpoints/noattn_qingdao.pt
@@ -905,14 +969,14 @@ python visualize.py --skip-seasonal --skip-importance
 
 ```text
 .
-├── train.py              # Model definition, feature engineering, training loop
+├── train.py              # Model definitions (GRU/LSTM/Transformer), feature engineering, training loop
 ├── test.py               # Evaluation, metrics, visualization
 ├── visualize.py          # Cross-experiment analysis & visualization
 ├── eda.py                # Exploratory data analysis
 ├── load_data.py           # ERA5 data download utility
 ├── README.md
 ├── data/                  # ERA5 CSV data files (4 sites)
-├── checkpoints/           # Trained model weights (.pt)
+├── checkpoints/           # Trained model weights (.pt) — GRU, LSTM, Transformer, ablation variants
 └── results/               # Evaluation outputs (JSON, CSV, PNG)
 ```
 
